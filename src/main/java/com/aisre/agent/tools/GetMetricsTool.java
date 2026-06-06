@@ -24,6 +24,20 @@ public class GetMetricsTool implements Tool {
     }
 
     @Override
+    public String parametersJsonSchema() {
+        return """
+               {
+                 "type": "object",
+                 "properties": {
+                   "service": { "type": "string", "description": "service name, e.g. order-service" },
+                   "metric": { "type": "string", "description": "e.g. error_rate or p95_latency" }
+                 },
+                 "required": ["service", "metric"]
+               }
+               """;
+    }
+
+    @Override
     public String execute(Map<String, String> args) {
         // Args (service, metric) accepted but ignored in the stub.
         return Resources.read("sample-incident/order-service-metrics.json");

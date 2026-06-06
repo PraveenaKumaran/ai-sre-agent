@@ -1,5 +1,6 @@
 package com.aisre.agent.tools;
 
+import com.aisre.agent.ai.ToolSpec;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -28,6 +29,16 @@ public class ToolRegistry {
     /** All registered tool names (handy for logging and, later, describing tools to the model). */
     public List<String> names() {
         return toolsByName.keySet().stream().sorted().toList();
+    }
+
+    /**
+     * Describe every tool to the model as a {@link ToolSpec} (name + description +
+     * parameter schema). This is what we send the model so it knows what it can call.
+     */
+    public List<ToolSpec> specs() {
+        return toolsByName.values().stream()
+                .map(t -> new ToolSpec(t.name(), t.description(), t.parametersJsonSchema()))
+                .toList();
     }
 
     /**

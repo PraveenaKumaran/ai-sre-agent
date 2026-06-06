@@ -24,6 +24,13 @@ public interface Tool {
     String description();
 
     /**
+     * A JSON-Schema object (as a string) describing this tool's arguments, so the
+     * model knows what to fill in when it calls the tool. Each tool owns and
+     * declares its own argument contract here.
+     */
+    String parametersJsonSchema();
+
+    /**
      * Run the tool.
      *
      * @param args named arguments (e.g. {@code service}, {@code time_window}).

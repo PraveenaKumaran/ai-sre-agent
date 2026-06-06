@@ -24,6 +24,20 @@ public class GetLogsTool implements Tool {
     }
 
     @Override
+    public String parametersJsonSchema() {
+        return """
+               {
+                 "type": "object",
+                 "properties": {
+                   "service": { "type": "string", "description": "service name, e.g. order-service" },
+                   "time_window": { "type": "string", "description": "e.g. last_15m" }
+                 },
+                 "required": ["service"]
+               }
+               """;
+    }
+
+    @Override
     public String execute(Map<String, String> args) {
         // Args (service, time_window) are accepted but ignored in the stub.
         return Resources.read("sample-incident/order-service.log");

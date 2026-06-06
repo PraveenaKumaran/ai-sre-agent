@@ -8,31 +8,42 @@ spring:
 # ---------------------------------------------------------------------------
 # Foundry / Foundry IQ configuration.
 #
-# NONE of this is used in Phase 1 (everything is stubbed with canned data).
-# It is here so Phase 2 has a single place to plug in real values, and so we
-# never hardcode endpoints or keys in Java code.
+# DEFAULTS ARE OFF. With foundry.enabled=false the app runs the Phase-1 stub
+# (canned data, no network), so the baseline always works without credentials.
 #
-# IMPORTANT: the exact endpoint paths, model/deployment names, auth headers,
-# and the Foundry IQ request/response shapes change over time. Do NOT trust
-# the placeholders below. Confirm the current shapes on Microsoft Learn:
+# IMPORTANT: the path templates, api-version values, auth header/scheme, and the
+# Foundry IQ request/response shapes change over time and differ per resource.
+# Do NOT trust the placeholders. Confirm the current shapes on Microsoft Learn:
 #   - Foundry SDKs/endpoints: search "Get started with Microsoft Foundry SDKs and Endpoints"
 #   - Foundry IQ: https://learn.microsoft.com/azure/foundry/agents/concepts/what-is-foundry-iq
 #
-# The API key is read from an environment variable and is NEVER committed.
-# Set it in your shell before running, e.g. (PowerShell):
-#   $env:FOUNDRY_API_KEY = "your-key-here"
+# Secrets come from environment variables ONLY and are never committed:
+#   (PowerShell)  $env:FOUNDRY_API_KEY = "your-model-key"
+#                 $env:FOUNDRY_IQ_API_KEY = "your-iq-key"   # only if IQ uses a separate key
 # ---------------------------------------------------------------------------
 foundry:
-  enabled: false                       # Phase 2 flips this on
+  enabled: false                         # <-- flip to true once values below are real
   endpoint: "https://CONFIRM-ON-MICROSOFT-LEARN"   # base Foundry endpoint
-  model: "CONFIRM-MODEL-OR-DEPLOYMENT-NAME"
-  api-key: ${FOUNDRY_API_KEY:}         # from env var only; blank if unset
-  iq:
-    enabled: false                     # Phase 2 flips this on
-    endpoint: "https://CONFIRM-ON-MICROSOFT-LEARN"  # Foundry IQ retrieval endpoint
-    index: "CONFIRM-IQ-INDEX-OR-KNOWLEDGE-SOURCE-NAME"
+  model: "CONFIRM-MODEL-DEPLOYMENT-NAME"           # the *deployment* name, not the model family
+  api-key: ${FOUNDRY_API_KEY:}           # from env var only; blank if unset
 
-# Reasoning-loop guardrails (used from Phase 3; defined here early for visibility).
+  # --- wire format (VERIFY ON MICROSOFT LEARN for your resource) ---
+  # {model} is substituted with the deployment name above.
+  chat-path: "/openai/deployments/{model}/chat/completions"
+  api-version: "CONFIRM-API-VERSION"
+  auth-header: "api-key"                 # key-auth header name; use "Authorization" for token auth
+  auth-scheme: ""                        # "" for api-key; "Bearer " (note trailing space) for tokens
+
+  iq:
+    enabled: false                       # <-- flip to true once IQ values below are real
+    endpoint: "https://CONFIRM-ON-MICROSOFT-LEARN"   # Foundry IQ retrieval endpoint
+    index: "CONFIRM-IQ-INDEX-OR-KNOWLEDGE-SOURCE-NAME"
+    retrieve-path: "/retrieval/indexes/{index}/retrieve"  # VERIFY ON LEARN
+    api-version: "CONFIRM-IQ-API-VERSION"
+    api-key: ${FOUNDRY_IQ_API_KEY:}      # from env var; if blank, code reuses foundry.api-key
+    top-k: 4                             # how many cited snippets to retrieve
+
+# Reasoning-loop guardrails.
 agent:
-  max-iterations: 6                    # hard cap on hypothesis loops (Phase 3)
-  min-confidence-to-propose: 0.6       # below this the agent escalates (Phase 3)
+  max-iterations: 6                      # hard cap on model turns (Phase 2 safety/cost guard)
+  min-confidence-to-propose: 0.6         # below this the agent escalates (full logic in Phase 3)

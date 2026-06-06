@@ -27,6 +27,20 @@ public class DraftFixTool implements Tool {
     }
 
     @Override
+    public String parametersJsonSchema() {
+        return """
+               {
+                 "type": "object",
+                 "properties": {
+                   "file_path": { "type": "string", "description": "file the change targets" },
+                   "change": { "type": "string", "description": "plain-English description of the fix to draft" }
+                 },
+                 "required": ["file_path", "change"]
+               }
+               """;
+    }
+
+    @Override
     public String execute(Map<String, String> args) {
         // args (file_path, change) accepted but ignored in the stub.
         return """

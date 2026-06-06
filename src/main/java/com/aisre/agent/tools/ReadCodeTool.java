@@ -24,6 +24,19 @@ public class ReadCodeTool implements Tool {
     }
 
     @Override
+    public String parametersJsonSchema() {
+        return """
+               {
+                 "type": "object",
+                 "properties": {
+                   "file_path": { "type": "string", "description": "path of the source file to read" }
+                 },
+                 "required": ["file_path"]
+               }
+               """;
+    }
+
+    @Override
     public String execute(Map<String, String> args) {
         // file_path arg accepted but ignored in the stub.
         return Resources.read("sample-incident/OrderService.java");
