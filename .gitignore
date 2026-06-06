@@ -28,6 +28,9 @@ build/
 *.war
 hs_err_pid*
 
+# Sample/synthetic incident logs are DATA, not real logs — keep them tracked.
+!src/main/resources/sample-incident/*.log
+
 # ---- IntelliJ IDEA ----
 .idea/
 *.iml

@@ -1,0 +1,21 @@
+2026-06-06T09:14:01.220Z INFO  [order-service] OrderController       : Received POST /api/orders for customerId=C-10293
+2026-06-06T09:14:01.221Z DEBUG [order-service] OrderService          : Loading customer profile customerId=C-10293
+2026-06-06T09:14:01.224Z DEBUG [order-service] LoyaltyClient         : Fetched profile customerId=C-10293 loyaltyTier=null source=legacy-import
+2026-06-06T09:14:01.225Z DEBUG [order-service] OrderService          : Applying loyalty discount for customerId=C-10293
+2026-06-06T09:14:01.226Z ERROR [order-service] OrderService          : Failed to process order for customerId=C-10293
+java.lang.NullPointerException: Cannot invoke "String.toUpperCase()" because "loyaltyTier" is null
+	at com.shop.order.OrderService.applyLoyaltyDiscount(OrderService.java:42)
+	at com.shop.order.OrderService.processOrder(OrderService.java:27)
+	at com.shop.order.OrderController.createOrder(OrderController.java:31)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+2026-06-06T09:14:01.227Z WARN  [order-service] OrderController       : Responding 500 to POST /api/orders correlationId=8f3a-...
+2026-06-06T09:14:02.001Z INFO  [order-service] LoyaltyClient         : Connecting to loyalty-db with apiKey=EXAMPLE_FAKE_KEY_DO_NOT_USE user=svc_loyalty
+2026-06-06T09:14:02.640Z ERROR [order-service] OrderService          : Failed to process order for customerId=C-10311
+java.lang.NullPointerException: Cannot invoke "String.toUpperCase()" because "loyaltyTier" is null
+	at com.shop.order.OrderService.applyLoyaltyDiscount(OrderService.java:42)
+	at com.shop.order.OrderService.processOrder(OrderService.java:27)
+2026-06-06T09:14:03.880Z ERROR [order-service] OrderService          : Failed to process order for customerId=C-10342
+java.lang.NullPointerException: Cannot invoke "String.toUpperCase()" because "loyaltyTier" is null
+	at com.shop.order.OrderService.applyLoyaltyDiscount(OrderService.java:42)
+2026-06-06T09:14:05.120Z INFO  [order-service] OrderController       : Received POST /api/orders for customerId=C-10410
+2026-06-06T09:14:05.140Z INFO  [order-service] OrderService          : Order processed OK customerId=C-10410 loyaltyTier=GOLD

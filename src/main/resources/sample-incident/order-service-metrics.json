@@ -1,0 +1,26 @@
+{
+  "service": "order-service",
+  "window": "2026-06-06T09:00:00Z..2026-06-06T09:20:00Z",
+  "note": "Synthetic metrics for the sample incident. Error rate spikes right when the deploy at 09:13 went out.",
+  "series": {
+    "error_rate_percent": [
+      { "t": "09:05", "v": 0.2 },
+      { "t": "09:10", "v": 0.3 },
+      { "t": "09:13", "v": 4.1 },
+      { "t": "09:14", "v": 18.7 },
+      { "t": "09:15", "v": 19.2 },
+      { "t": "09:18", "v": 18.9 }
+    ],
+    "p95_latency_ms": [
+      { "t": "09:05", "v": 180 },
+      { "t": "09:10", "v": 190 },
+      { "t": "09:13", "v": 195 },
+      { "t": "09:14", "v": 210 },
+      { "t": "09:15", "v": 205 },
+      { "t": "09:18", "v": 208 }
+    ],
+    "deploys": [
+      { "t": "09:13", "event": "deploy v2.4.0 - 'legacy customer import' feature merged" }
+    ]
+  }
+}

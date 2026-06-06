@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+      Spring Boot parent gives us sensible defaults and managed dependency versions,
+      so we don't have to pin versions for every library ourselves.
+    -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.3.5</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.aisre</groupId>
+    <artifactId>ai-sre-agent</artifactId>
+    <version>0.1.0</version>
+    <name>ai-sre-agent</name>
+    <description>AI Incident Triage Agent (AI SRE) - Microsoft Agents League, Reasoning track</description>
+
+    <properties>
+        <!--
+          The spec targets Java 21. The current machine only has JDK 17 installed,
+          so Phase 1 is built against Java 17 (also an LTS, fully supported by
+          Spring Boot 3.x). To move to Java 21 later, install a JDK 21 and change
+          the single line below to <java.version>21</java.version>.
+        -->
+        <java.version>17</java.version>
+    </properties>
+
+    <dependencies>
+        <!-- Spring Web: gives us the REST controller and an embedded Tomcat server. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- Test starter: JUnit 5 + Spring test support, used from Phase 1 onward. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Lets us run the app with `mvn spring-boot:run` and build a runnable jar. -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

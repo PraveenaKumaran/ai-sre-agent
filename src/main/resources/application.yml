@@ -1,0 +1,38 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: ai-sre-agent
+
+# ---------------------------------------------------------------------------
+# Foundry / Foundry IQ configuration.
+#
+# NONE of this is used in Phase 1 (everything is stubbed with canned data).
+# It is here so Phase 2 has a single place to plug in real values, and so we
+# never hardcode endpoints or keys in Java code.
+#
+# IMPORTANT: the exact endpoint paths, model/deployment names, auth headers,
+# and the Foundry IQ request/response shapes change over time. Do NOT trust
+# the placeholders below. Confirm the current shapes on Microsoft Learn:
+#   - Foundry SDKs/endpoints: search "Get started with Microsoft Foundry SDKs and Endpoints"
+#   - Foundry IQ: https://learn.microsoft.com/azure/foundry/agents/concepts/what-is-foundry-iq
+#
+# The API key is read from an environment variable and is NEVER committed.
+# Set it in your shell before running, e.g. (PowerShell):
+#   $env:FOUNDRY_API_KEY = "your-key-here"
+# ---------------------------------------------------------------------------
+foundry:
+  enabled: false                       # Phase 2 flips this on
+  endpoint: "https://CONFIRM-ON-MICROSOFT-LEARN"   # base Foundry endpoint
+  model: "CONFIRM-MODEL-OR-DEPLOYMENT-NAME"
+  api-key: ${FOUNDRY_API_KEY:}         # from env var only; blank if unset
+  iq:
+    enabled: false                     # Phase 2 flips this on
+    endpoint: "https://CONFIRM-ON-MICROSOFT-LEARN"  # Foundry IQ retrieval endpoint
+    index: "CONFIRM-IQ-INDEX-OR-KNOWLEDGE-SOURCE-NAME"
+
+# Reasoning-loop guardrails (used from Phase 3; defined here early for visibility).
+agent:
+  max-iterations: 6                    # hard cap on hypothesis loops (Phase 3)
+  min-confidence-to-propose: 0.6       # below this the agent escalates (Phase 3)
