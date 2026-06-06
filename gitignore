@@ -1,0 +1,48 @@
+# ---- Secrets / local config (NEVER commit) ----
+.env
+*.env
+application-local.yml
+application-local.yaml
+application-secrets.yml
+application-secrets.yaml
+*.local.yml
+secrets.*
+*.pem
+*.key
+*.p12
+*.keystore
+credentials.json
+
+# ---- Maven ----
+target/
+
+# ---- Gradle ----
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# ---- Java ----
+*.class
+*.log
+*.jar
+*.war
+hs_err_pid*
+
+# ---- IntelliJ IDEA ----
+.idea/
+*.iml
+*.iws
+out/
+
+# ---- VS Code ----
+.vscode/
+
+# ---- Eclipse ----
+.project
+.classpath
+.settings/
+bin/
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
