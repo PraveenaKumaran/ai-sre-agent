@@ -48,9 +48,15 @@ public class FoundryModelClient implements ModelClient {
             throw new IllegalStateException("FoundryModelClient called while foundry.enabled=false");
         }
 
-        // 1) Build the request URL: endpoint + chat-path (with {model}) + ?api-version=...
+        // 1) Build the request URL: endpoint + chat-path.
+        //    On the OpenAI v1 endpoint the model goes in the BODY (no {model} in the
+        //    path) and there is NO api-version query param, so we only append
+        //    api-version when one is actually configured (classic deployments path).
         String path = props.chatPath().replace("{model}", props.model());
-        String url = props.endpoint() + path + "?api-version=" + props.apiVersion();
+        String url = props.endpoint() + path;
+        if (props.apiVersion() != null && !props.apiVersion().isBlank()) {
+            url += "?api-version=" + props.apiVersion();
+        }
 
         // 2) Build the JSON request body from our messages + tools.
         String body = buildRequestBody(messages, tools);
@@ -79,10 +85,19 @@ public class FoundryModelClient implements ModelClient {
      */
     private String buildRequestBody(List<ChatMessage> messages, List<ToolSpec> tools) {
         ObjectNode root = json.createObjectNode();
-        // Some Foundry endpoints take the deployment from the URL path and ignore this;
-        // the unified inference endpoint wants it in the body. Harmless to include. VERIFY ON LEARN.
+        // On the OpenAI v1 endpoint the model is selected here in the body.
         root.put("model", props.model());
-        root.put("temperature", 0); // deterministic-ish: we want stable reasoning, not creativity.
+
+        // gpt-5-mini is a REASONING model: it rejects "temperature", and uses
+        // "max_completion_tokens" (not "max_tokens"). We send "reasoning_effort"
+        // to control how much it thinks. All three come from config so a different
+        // (non-reasoning) model can be configured later without code changes.
+        if (props.reasoningEffort() != null && !props.reasoningEffort().isBlank()) {
+            root.put("reasoning_effort", props.reasoningEffort());
+        }
+        if (props.maxCompletionTokens() > 0) {
+            root.put("max_completion_tokens", props.maxCompletionTokens());
+        }
 
         // messages -> JSON array
         ArrayNode msgs = root.putArray("messages");

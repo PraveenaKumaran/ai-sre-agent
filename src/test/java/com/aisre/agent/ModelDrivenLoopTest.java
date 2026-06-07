@@ -45,7 +45,8 @@ class ModelDrivenLoopTest {
     private ReasoningLoop loopWith(ModelClient model) {
         // IQ disabled -> search_knowledge returns the canned, cited sample snippets.
         FoundryProperties.Iq iq = new FoundryProperties.Iq(false, "", "", "", "", "", 4);
-        FoundryProperties props = new FoundryProperties(true, "", "", "", "", "", "api-key", "", iq);
+        FoundryProperties props = new FoundryProperties(
+                true, "", "", "", "", "", "api-key", "", "low", 4000, iq);
         FoundryIqClient iqClient = new FoundryIqClient(props, mapper);
 
         List<Tool> tools = List.of(

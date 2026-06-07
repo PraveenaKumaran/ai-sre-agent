@@ -6,6 +6,7 @@ import com.aisre.agent.tools.ToolRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.TestPropertySource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -18,6 +19,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * exactly as they are at runtime.
  */
 @SpringBootTest
+// Pin the stub path on, independent of application.yml (which is now live/enabled).
+// This keeps the Phase-1 baseline test hermetic — no model/network calls.
+@TestPropertySource(properties = {"foundry.enabled=false", "foundry.iq.enabled=false"})
 class ReasoningLoopTest {
 
     @Autowired

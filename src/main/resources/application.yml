@@ -22,17 +22,24 @@ spring:
 #                 $env:FOUNDRY_IQ_API_KEY = "your-iq-key"   # only if IQ uses a separate key
 # ---------------------------------------------------------------------------
 foundry:
-  enabled: false                         # <-- flip to true once values below are real
-  endpoint: "https://CONFIRM-ON-MICROSOFT-LEARN"   # base Foundry endpoint
-  model: "CONFIRM-MODEL-DEPLOYMENT-NAME"           # the *deployment* name, not the model family
-  api-key: ${FOUNDRY_API_KEY:}           # from env var only; blank if unset
+  enabled: true                          # live: drives the real model-based loop
+  # OpenAI v1 endpoint (api-key auth works here; no Entra/Azure CLI needed).
+  # If this host does not resolve, switch to the .services.ai.azure.com form:
+  #   https://ai-sre-resource-praveen.services.ai.azure.com
+  endpoint: "https://ai-sre-resource-praveen.openai.azure.com"
+  model: "gpt-5-mini"                     # selected in the request BODY on the v1 endpoint
+  api-key: ${FOUNDRY_API_KEY:}           # from env var only; blank if unset (NEVER committed)
 
-  # --- wire format (VERIFY ON MICROSOFT LEARN for your resource) ---
-  # {model} is substituted with the deployment name above.
-  chat-path: "/openai/deployments/{model}/chat/completions"
-  api-version: "CONFIRM-API-VERSION"
-  auth-header: "api-key"                 # key-auth header name; use "Authorization" for token auth
-  auth-scheme: ""                        # "" for api-key; "Bearer " (note trailing space) for tokens
+  # --- wire format: OpenAI v1 shape ---
+  # v1 = model in the body, NO {model} in the path, and NO api-version query param.
+  chat-path: "/openai/v1/chat/completions"
+  api-version: ""                        # blank -> not appended to the URL (v1 has none)
+  auth-header: "api-key"                 # key-auth header name
+  auth-scheme: ""                        # "" -> header value is the raw key (no "Bearer " prefix)
+
+  # --- reasoning-model params (gpt-5-mini) ---
+  reasoning-effort: "low"                # how hard the model thinks; "" to omit
+  max-completion-tokens: 4000            # reply cap (reasoning models use this, NOT max_tokens)
 
   iq:
     enabled: false                       # <-- flip to true once IQ values below are real
