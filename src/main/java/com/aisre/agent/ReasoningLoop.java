@@ -1,5 +1,18 @@
 package com.aisre.agent;
 
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.stereotype.Service;
+import org.springframework.util.StreamUtils;
+
 import com.aisre.agent.ai.ChatMessage;
 import com.aisre.agent.ai.ModelClient;
 import com.aisre.agent.ai.ModelConclusion;
@@ -11,18 +24,6 @@ import com.aisre.agent.model.TriageResult;
 import com.aisre.agent.tools.ToolRegistry;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.stereotype.Service;
-import org.springframework.util.StreamUtils;
-
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * The orchestrator loop.

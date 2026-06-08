@@ -41,14 +41,16 @@ foundry:
   reasoning-effort: "low"                # how hard the model thinks; "" to omit
   max-completion-tokens: 4000            # reply cap (reasoning models use this, NOT max_tokens)
 
+  # Foundry IQ = Azure AI Search agentic retrieval (knowledge base "retrieve" action).
+  # Shape verified on Microsoft Learn, GA api-version 2026-04-01.
   iq:
-    enabled: false                       # <-- flip to true once IQ values below are real
-    endpoint: "https://CONFIRM-ON-MICROSOFT-LEARN"   # Foundry IQ retrieval endpoint
-    index: "CONFIRM-IQ-INDEX-OR-KNOWLEDGE-SOURCE-NAME"
-    retrieve-path: "/retrieval/indexes/{index}/retrieve"  # VERIFY ON LEARN
-    api-version: "CONFIRM-IQ-API-VERSION"
-    api-key: ${FOUNDRY_IQ_API_KEY:}      # from env var; if blank, code reuses foundry.api-key
-    top-k: 4                             # how many cited snippets to retrieve
+    enabled: true                        # live: search_knowledge now hits Foundry IQ
+    endpoint: "https://ai-sre-search.search.windows.net"   # Azure AI Search service URL
+    index: "knowledgebase969"            # the knowledge BASE name ({index} is substituted into the path)
+    retrieve-path: "/knowledgebases/{index}/retrieve"      # GA retrieve action path
+    api-version: "2026-05-01-preview"            # File knowledge sources require preview API
+    api-key: ${FOUNDRY_IQ_API_KEY:}      # Azure AI Search key, env var only (NEVER committed)
+    top-k: 4                             # (not sent on 2026-04-01; result size is service-controlled)
 
 # Reasoning-loop guardrails.
 agent:
