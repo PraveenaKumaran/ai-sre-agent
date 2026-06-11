@@ -1,37 +1,99 @@
 package com.aisre.agent.model;
 
+import com.aisre.agent.agentic.Citation;
+import com.aisre.agent.agentic.Critique;
+import com.aisre.agent.agentic.Decision;
+import com.aisre.agent.agentic.DecisionType;
+import com.aisre.agent.agentic.Evidence;
+import com.aisre.agent.agentic.Hypothesis;
+import com.aisre.agent.agentic.IncidentContext;
+import com.aisre.agent.agentic.TraceEvent;
+
 import java.util.List;
 
 /**
- * What /triage returns: the agent's triage of the incident.
+ * What /triage returns: the multi-agent pipeline's full result.
  *
- * In Phase 1 every field is filled with canned/fake values by {@code ReasoningLoop}
- * — NO AI is involved yet. The shape is intentionally the same shape we will fill
- * for real in later phases, so the contract the caller sees does not change.
+ * PRESERVED FIELDS (the stable API contract — do not rename):
+ *   incidentId, service, citedSources, proposedFix, postmortem, confidence,
+ *   status (with "AWAITING_APPROVAL" as the human-gate status).
  *
- * @param incidentId        a generated id for this triage run
- * @param service           echoes back the failing service
- * @param classification    what kind of failure this is (Phase 1: hardcoded)
- * @param rootCauseHypothesis the agent's best theory of the cause (Phase 1: hardcoded)
- * @param citedSources      knowledge sources backing the hypothesis (Phase 1: from stub search_knowledge)
- * @param proposedFix       a drafted diff / PR description (Phase 1: from stub draft_fix)
- * @param postmortem        a short write-up citing the sources (Phase 1: hardcoded)
- * @param confidence        0.0–1.0 confidence (Phase 1: fixed placeholder)
- * @param reasoningSteps    human-readable trail of what the agent "did" (precursor to the Phase 3 trace)
- * @param status            workflow state; always AWAITING_APPROVAL — the agent never acts on its own
- * @param phaseNote         a banner reminding us this output is a Phase 1 stub
+ * STRUCTURED SECTIONS (new with the multi-agent architecture):
+ *   evidence (E#), hypotheses (H# with E/C provenance), critiques (the Critic's
+ *   structured verdicts), decision (the Judge's outcome), and trace (the glass-box
+ *   event log, which absorbs the old classification/reasoningSteps fields).
+ *
+ * @param incidentId   generated id for this triage run.
+ * @param service      echoes back the failing service.
+ * @param citedSources readable knowledge source names supporting the conclusion.
+ * @param proposedFix  drafted fix (RECOMMEND_REMEDIATION only), else "".
+ * @param postmortem   write-up citing sources (RECOMMEND_REMEDIATION only), else "".
+ * @param confidence   the selected hypothesis's confidence, or 0.0 when escalating.
+ * @param status       "AWAITING_APPROVAL" (gate) or an escalation status.
+ * @param evidence     the TriageAgent's structured facts.
+ * @param hypotheses   the FINAL round of hypotheses (discarded ones live in the trace).
+ * @param critiques    the Critic's verdicts on that final round.
+ * @param decision     the Judge's decision object.
+ * @param trace        the ordered glass-box trace events.
  */
 public record TriageResult(
         String incidentId,
         String service,
-        String classification,
-        String rootCauseHypothesis,
         List<String> citedSources,
         String proposedFix,
         String postmortem,
         double confidence,
-        List<String> reasoningSteps,
         String status,
-        String phaseNote
+        List<Evidence> evidence,
+        List<Hypothesis> hypotheses,
+        List<Critique> critiques,
+        Decision decision,
+        List<TraceEvent> trace
 ) {
+
+    /** Map a completed pipeline run onto the API shape. */
+    public static TriageResult from(IncidentContext ctx) {
+        Decision decision = ctx.decision();
+        Hypothesis selected = decision.selectedHypothesisId() == null
+                ? null
+                : ctx.findHypothesis(decision.selectedHypothesisId()).orElse(null);
+
+        return new TriageResult(
+                ctx.incidentId(),
+                ctx.service(),
+                citedSources(ctx, selected),
+                decision.proposedFix() == null ? "" : decision.proposedFix(),
+                decision.postmortem() == null ? "" : decision.postmortem(),
+                selected == null ? 0.0 : selected.confidence(),
+                status(decision.type()),
+                ctx.evidence(),
+                ctx.hypotheses(),
+                ctx.critiques(),
+                decision,
+                ctx.trace().events());
+    }
+
+    /** The human-gate status is AWAITING_APPROVAL; escalations carry their own names. */
+    private static String status(DecisionType type) {
+        return switch (type) {
+            case RECOMMEND_REMEDIATION -> "AWAITING_APPROVAL";
+            case ESCALATE_TO_HUMAN -> "ESCALATED_TO_HUMAN";
+            case INSUFFICIENT_EVIDENCE -> "INSUFFICIENT_EVIDENCE";
+        };
+    }
+
+    /**
+     * citedSources stays a list of READABLE source names: the ones backing the
+     * selected hypothesis when there is one, otherwise every source that was
+     * consulted (so an escalation still shows what knowledge was checked).
+     */
+    private static List<String> citedSources(IncidentContext ctx, Hypothesis selected) {
+        if (selected != null && !selected.supportingCitationIds().isEmpty()) {
+            return selected.supportingCitationIds().stream()
+                    .map(id -> ctx.findCitation(id).map(Citation::sourceName).orElse(id))
+                    .distinct()
+                    .toList();
+        }
+        return ctx.citations().stream().map(Citation::sourceName).distinct().toList();
+    }
 }

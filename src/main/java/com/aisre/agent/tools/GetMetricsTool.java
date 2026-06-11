@@ -7,8 +7,8 @@ import java.util.Map;
 /**
  * Tool 2: get_metrics(service, metric) -> numeric series.
  *
- * Phase 1 stub: returns the canned metrics file (error rate + p95 latency + deploys).
- * Phase 2+/stretch: would query a real metrics backend.
+ * Serves the canned metrics FOR THE REQUESTED SERVICE (order-service or
+ * payment-service), or an honest "no metrics found" for anything else.
  */
 @Component
 public class GetMetricsTool implements Tool {
@@ -39,7 +39,12 @@ public class GetMetricsTool implements Tool {
 
     @Override
     public String execute(Map<String, String> args) {
-        // Args (service, metric) accepted but ignored in the stub.
-        return Resources.read("sample-incident/order-service-metrics.json");
+        // Default to order-service so legacy callers without a service arg still work.
+        String service = args.getOrDefault("service", "order-service");
+        return switch (service) {
+            case "order-service" -> Resources.read("sample-incident/order-service-metrics.json");
+            case "payment-service" -> Resources.read("sample-incident/payment-service-metrics.json");
+            default -> "No metrics found for service '" + service + "' in the requested window.";
+        };
     }
 }

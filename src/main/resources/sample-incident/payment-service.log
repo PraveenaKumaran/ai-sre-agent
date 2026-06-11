@@ -1,0 +1,22 @@
+2026-06-08T09:04:58.110Z INFO  [payment-service] DeployListener        : Deploy v3.2.0 applied: http-client configuration update (connection pool tuning)
+2026-06-08T09:05:21.402Z INFO  [payment-service] PaymentController     : Received POST /api/payments orderId=O-55801
+2026-06-08T09:05:21.404Z DEBUG [payment-service] HttpClientPool        : Acquiring connection to bank-gateway (active=5 max=5 waiting=9)
+2026-06-08T09:05:36.511Z ERROR [payment-service] PaymentService        : Payment failed orderId=O-55801
+java.net.SocketTimeoutException: Read timed out
+	at com.shop.payment.BankGatewayClient.charge(BankGatewayClient.java:31)
+	at com.shop.payment.PaymentService.process(PaymentService.java:54)
+	at com.shop.payment.PaymentController.createPayment(PaymentController.java:28)
+2026-06-08T09:05:40.118Z INFO  [payment-service] BankGatewayClient     : Health-check: bank-gateway responded 200 OK in 118 ms
+2026-06-08T09:05:41.220Z DEBUG [payment-service] HttpClientPool        : Acquiring connection to bank-gateway (active=5 max=5 waiting=14)
+2026-06-08T09:05:56.834Z ERROR [payment-service] PaymentService        : Payment failed orderId=O-55819
+java.net.SocketTimeoutException: Read timed out
+	at com.shop.payment.BankGatewayClient.charge(BankGatewayClient.java:31)
+	at com.shop.payment.PaymentService.process(PaymentService.java:54)
+2026-06-08T09:06:02.005Z INFO  [payment-service] BankGatewayClient     : Connecting with Authorization: Bearer EXAMPLE_FAKE_TOKEN_DO_NOT_USE
+2026-06-08T09:06:10.450Z INFO  [payment-service] BankGatewayClient     : Health-check: bank-gateway responded 200 OK in 121 ms
+2026-06-08T09:06:15.602Z WARN  [payment-service] HttpClientPool        : Connection acquire wait p95=14800ms (active=5 max=5 waiting=23)
+2026-06-08T09:06:31.118Z ERROR [payment-service] PaymentService        : Payment failed orderId=O-55842
+java.net.SocketTimeoutException: Read timed out
+	at com.shop.payment.BankGatewayClient.charge(BankGatewayClient.java:31)
+2026-06-08T09:07:02.300Z INFO  [payment-service] BankGatewayClient     : Health-check: bank-gateway responded 200 OK in 115 ms
+2026-06-08T09:07:15.940Z WARN  [payment-service] HttpClientPool        : Connection acquire wait p95=15200ms (active=5 max=5 waiting=31)

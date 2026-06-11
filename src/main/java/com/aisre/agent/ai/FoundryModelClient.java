@@ -29,11 +29,19 @@ public class FoundryModelClient implements ModelClient {
     private final ObjectMapper json;
     private final RestClient http;
 
+    /** Instrumentation: total model invocations, read by the eval harness per incident. */
+    private final java.util.concurrent.atomic.AtomicLong invocations = new java.util.concurrent.atomic.AtomicLong();
+
     public FoundryModelClient(FoundryProperties props, ObjectMapper json) {
         this.props = props;
         this.json = json;
         // RestClient is Spring's modern synchronous HTTP client.
         this.http = RestClient.create();
+    }
+
+    /** Total nextTurn invocations since startup (monotonic; callers diff before/after). */
+    public long invocationCount() {
+        return invocations.get();
     }
 
     @Override
@@ -47,6 +55,7 @@ public class FoundryModelClient implements ModelClient {
             // Guard: the loop should check isEnabled() first. If we get here, it's a bug.
             throw new IllegalStateException("FoundryModelClient called while foundry.enabled=false");
         }
+        invocations.incrementAndGet(); // count every real model call (attempts included)
 
         // 1) Build the request URL: endpoint + chat-path.
         //    On the OpenAI v1 endpoint the model goes in the BODY (no {model} in the

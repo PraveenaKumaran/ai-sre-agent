@@ -1,0 +1,372 @@
+{
+    "incidentId": "INC-06eca066",
+    "service": "payment-service",
+    "citedSources": [
+        "runbook-connection-pool-exhaustion.md",
+        "postmortem-2025-09-payment-pool.md"
+    ],
+    "proposedFix": "Proposal (human approval required): 1) Roll back the v3.2.0 http-client connection-pool configuration change to the previous known-good values OR temporarily increase the client connection pool size and reduce connection_acquire timeout to prevent long queue waits while investigating. 2) Re-deploy a configuration that restores pool.max to previous value (or to a safe higher value if rollback is not possible) and lower connection_acquire_wait thresholds so requests fail fast instead of piling up. 3) Add/verify client-side instrumentation and alerts: track pool.max, active_connections, connection_acquire_wait_ms_p95, and socket timeout counts; create an alert when active_connections == max and acquire_wait_p95 > threshold. 4) Perform a controlled canary of the config change with load to validate behavior before wide rollout. 5) Post-incident: update deployment checklist to include runbook RB-POOL-001 verification steps and schedule a follow-up to review whether default pool sizing and timeouts need revision.",
+    "postmortem": "Summary: After the v3.2.0 deploy that changed http-client connection-pool tuning (E1), the payment-service hit client-side connection-pool exhaustion (active connections reached 5/5 and connection_acquire_wait_ms_p95 rose to ~9,800–15,200 ms; E6), producing many local read timeouts (E2, E3) and a spike in error rate (E5) while the bank-gateway health-checks remained healthy and low-latency (E4). Root cause: client-side connection-pool exhaustion caused by the recent configuration change. Supporting sources: runbook-connection-pool-exhaustion.md (C1) describes this failure mode and diagnostics; postmortem-2025-09-payment-pool.md (C2) documents a prior identical incident and mitigation. Actions: rolled-back or adjusted pool config (proposed), improved alerts and instrumentation, and will add canary verification to deployment checklist (proposal requires human approval).",
+    "confidence": 0.8,
+    "status": "AWAITING_APPROVAL",
+    "evidence": [
+        {
+            "id": "E1",
+            "type": "timeline",
+            "statement": "2026-06-08T09:04:58.110Z deploy v3.2.0 was applied with an 'http-client configuration update (connection pool tuning)'.",
+            "source": "logs"
+        },
+        {
+            "id": "E2",
+            "type": "log",
+            "statement": "At 2026-06-08T09:05:36.511Z the service logged 'Payment failed orderId=O-55801' with a java.net.SocketTimeoutException: Read timed out from com.shop.payment.BankGatewayClient.charge at BankGatewayClient.java:31.",
+            "source": "logs"
+        },
+        {
+            "id": "E3",
+            "type": "log",
+            "statement": "Repeated 'Payment failed' errors with java.net.SocketTimeoutException: Read timed out occurred at 2026-06-08T09:05:56.834Z (orderId=O-55819) and 2026-06-08T09:06:31.118Z (orderId=O-55842).",
+            "source": "logs"
+        },
+        {
+            "id": "E4",
+            "type": "log",
+            "statement": "Health-check logs show bank-gateway responded 200 OK in 118 ms at 09:05:40.118Z, in 121 ms at 09:06:10.450Z, and in 115 ms at 09:07:02.300Z.",
+            "source": "logs"
+        },
+        {
+            "id": "E5",
+            "type": "metric",
+            "statement": "error_rate_percent rose from 0.2% at 09:03 to 6.4% at 09:05 and to 21.3% at 09:07 within the 09:00–09:20 window.",
+            "source": "metrics"
+        },
+        {
+            "id": "E6",
+            "type": "metric",
+            "statement": "Connection pool metrics show active connections reached the max 5/5 at 09:05 and remained at 5/5 through 09:15 while connection_acquire_wait_ms_p95 increased from 6 ms at 09:03 to 9,800 ms at 09:05 and to 15,200 ms at 09:10.",
+            "source": "metrics"
+        }
+    ],
+    "hypotheses": [
+        {
+            "id": "H1",
+            "statement": "Client-side connection-pool exhaustion introduced by the v3.2.0 http-client configuration change caused requests to queue waiting for a connection and time out locally, while the bank-gateway itself remained healthy.",
+            "confidence": 0.8,
+            "supportingEvidenceIds": [
+                "E1",
+                "E2",
+                "E3",
+                "E4",
+                "E5",
+                "E6"
+            ],
+            "supportingCitationIds": [
+                "C1",
+                "C2"
+            ]
+        },
+        {
+            "id": "H2",
+            "statement": "Intermittent increased latency (or sporadic slow tails) in the bank-gateway for real payment requests (not surfaced by lightweight health-checks) caused connections to be held longer, driving the client pool to saturate and producing read timeouts in Payment-service.",
+            "confidence": 0.3,
+            "supportingEvidenceIds": [
+                "E2",
+                "E3",
+                "E4",
+                "E5",
+                "E6"
+            ],
+            "supportingCitationIds": [
+                "C1"
+            ]
+        }
+    ],
+    "critiques": [
+        {
+            "hypothesisId": "H1",
+            "status": "SUPPORTED",
+            "reasons": [
+                "E1 shows a deploy at 2026-06-08T09:04:58.110Z that changed http-client connection pool config, correlating temporally with the spike that follows.",
+                "E6 shows connection_pool active reached the configured max 5/5 at 09:05 and stayed there while connection_acquire_wait_ms_p95 jumped from single digits to 9,800 ms then 15,200 ms, directly supporting client-side queueing on the pool.",
+                "E2 and E3 show SocketTimeoutException read timeouts beginning at 09:05:36 and continuing, consistent with requests timing out while waiting for a connection rather than downstream failures.",
+                "E4 shows bank-gateway health-checks returned 200 OK with low latency (~115–121 ms) during the incident window, indicating the downstream remained healthy and contradicting a downstream outage.",
+                "E5 shows error_rate_percent rose sharply in the same window, consistent with client-side timeouts caused by pool exhaustion.",
+                "C1 (runbook RB-POOL-001) describes exactly this failure mode (client-side pool exhaustion after a config change) and recommends the exact diagnostics observed (check downstream health, check your own pool metrics, correlate with deploy).",
+                "C2 (postmortem PM-2025-09-PAYMENT) documents a prior similar incident where a client pool tuning caused identical symptoms and misattribution to the downstream, strengthening the plausibility of this root cause."
+            ]
+        },
+        {
+            "hypothesisId": "H2",
+            "status": "REJECTED",
+            "reasons": [
+                "E4 shows bank-gateway health-checks returned 200 OK with low latencies (~115–121 ms) at 09:05–09:07, which contradicts the claim of intermittent increased latency on the downstream.",
+                "C1 explicitly states: if downstream p95 is normal and health-checks return 200 quickly, the downstream is NOT the problem — this runbook guidance contradicts the hypothesis that unseen downstream slow tails caused the pool saturation.",
+                "No evidence item (E1–E6) shows increased bank-gateway latency for real payment requests; E2 and E3 show client-side SocketTimeoutExceptions but do not provide evidence that the bank-gateway was slow or that requests reached it, so the hypothesis lacks supporting evidence from the provided items.",
+                "E6 demonstrates client-side pool saturation and large connection_acquire_wait_ms_p95, which is an alternative explanation that H2 does not address; the hypothesis fails to explain why health-checks remained fast (E4) while claiming real-payment latencies increased."
+            ]
+        }
+    ],
+    "decision": {
+        "type": "RECOMMEND_REMEDIATION",
+        "selectedHypothesisId": "H1",
+        "rationale": "Per priority rules: the Critic marked H1 as SUPPORTED and H2 as REJECTED. H1 explains the full set of observations (E1 deploy changed http-client pool; E6 pool at 5/5 and connection_acquire_wait_ms_p95 jumping to ~9,800–15,200 ms; E2/E3 repeated java.net.SocketTimeoutException read timeouts; E4 shows bank-gateway health-checks healthy and low latency; E5 error rate spike). Citations C1 and C2 explicitly describe this failure mode and a prior identical incident, supporting the mechanism. Therefore H1 best satisfies Critic support, evidence coverage, and citation backing.",
+        "proposedFix": "Proposal (human approval required): 1) Roll back the v3.2.0 http-client connection-pool configuration change to the previous known-good values OR temporarily increase the client connection pool size and reduce connection_acquire timeout to prevent long queue waits while investigating. 2) Re-deploy a configuration that restores pool.max to previous value (or to a safe higher value if rollback is not possible) and lower connection_acquire_wait thresholds so requests fail fast instead of piling up. 3) Add/verify client-side instrumentation and alerts: track pool.max, active_connections, connection_acquire_wait_ms_p95, and socket timeout counts; create an alert when active_connections == max and acquire_wait_p95 > threshold. 4) Perform a controlled canary of the config change with load to validate behavior before wide rollout. 5) Post-incident: update deployment checklist to include runbook RB-POOL-001 verification steps and schedule a follow-up to review whether default pool sizing and timeouts need revision.",
+        "postmortem": "Summary: After the v3.2.0 deploy that changed http-client connection-pool tuning (E1), the payment-service hit client-side connection-pool exhaustion (active connections reached 5/5 and connection_acquire_wait_ms_p95 rose to ~9,800–15,200 ms; E6), producing many local read timeouts (E2, E3) and a spike in error rate (E5) while the bank-gateway health-checks remained healthy and low-latency (E4). Root cause: client-side connection-pool exhaustion caused by the recent configuration change. Supporting sources: runbook-connection-pool-exhaustion.md (C1) describes this failure mode and diagnostics; postmortem-2025-09-payment-pool.md (C2) documents a prior identical incident and mitigation. Actions: rolled-back or adjusted pool config (proposed), improved alerts and instrumentation, and will add canary verification to deployment checklist (proposal requires human approval)."
+    },
+    "trace": [
+        {
+            "seq": 1,
+            "type": "INCIDENT_RECEIVED",
+            "agent": "Orchestrator",
+            "summary": "Incident received for payment-service",
+            "payload": {
+                "service": "payment-service",
+                "stackTraceChars": 260,
+                "logChars": 2233,
+                "metricChars": 1486,
+                "timestamp": "2026-06-11T19:58:45.148981300Z"
+            }
+        },
+        {
+            "seq": 2,
+            "type": "REDACTION",
+            "agent": "Orchestrator",
+            "summary": "Secret redaction applied at the boundary (before any model sees the input)",
+            "payload": {
+                "stackTraceChanged": false,
+                "logsChanged": true,
+                "metricsChanged": false
+            }
+        },
+        {
+            "seq": 3,
+            "type": "AGENT_HANDOFF",
+            "agent": "Orchestrator",
+            "summary": "Orchestrator -> TriageAgent",
+            "payload": {
+                "agent": "TriageAgent"
+            }
+        },
+        {
+            "seq": 4,
+            "type": "EVIDENCE_EXTRACTED",
+            "agent": "TriageAgent",
+            "summary": "Extracted 6 evidence items",
+            "payload": {
+                "count": 6,
+                "evidence": [
+                    {
+                        "id": "E1",
+                        "type": "timeline",
+                        "statement": "2026-06-08T09:04:58.110Z deploy v3.2.0 was applied with an 'http-client configuration update (connection pool tuning)'.",
+                        "source": "logs"
+                    },
+                    {
+                        "id": "E2",
+                        "type": "log",
+                        "statement": "At 2026-06-08T09:05:36.511Z the service logged 'Payment failed orderId=O-55801' with a java.net.SocketTimeoutException: Read timed out from com.shop.payment.BankGatewayClient.charge at BankGatewayClient.java:31.",
+                        "source": "logs"
+                    },
+                    {
+                        "id": "E3",
+                        "type": "log",
+                        "statement": "Repeated 'Payment failed' errors with java.net.SocketTimeoutException: Read timed out occurred at 2026-06-08T09:05:56.834Z (orderId=O-55819) and 2026-06-08T09:06:31.118Z (orderId=O-55842).",
+                        "source": "logs"
+                    },
+                    {
+                        "id": "E4",
+                        "type": "log",
+                        "statement": "Health-check logs show bank-gateway responded 200 OK in 118 ms at 09:05:40.118Z, in 121 ms at 09:06:10.450Z, and in 115 ms at 09:07:02.300Z.",
+                        "source": "logs"
+                    },
+                    {
+                        "id": "E5",
+                        "type": "metric",
+                        "statement": "error_rate_percent rose from 0.2% at 09:03 to 6.4% at 09:05 and to 21.3% at 09:07 within the 09:00–09:20 window.",
+                        "source": "metrics"
+                    },
+                    {
+                        "id": "E6",
+                        "type": "metric",
+                        "statement": "Connection pool metrics show active connections reached the max 5/5 at 09:05 and remained at 5/5 through 09:15 while connection_acquire_wait_ms_p95 increased from 6 ms at 09:03 to 9,800 ms at 09:05 and to 15,200 ms at 09:10.",
+                        "source": "metrics"
+                    }
+                ]
+            }
+        },
+        {
+            "seq": 5,
+            "type": "AGENT_HANDOFF",
+            "agent": "Orchestrator",
+            "summary": "Orchestrator -> KnowledgeAgent",
+            "payload": {
+                "agent": "KnowledgeAgent"
+            }
+        },
+        {
+            "seq": 6,
+            "type": "IQ_QUERY",
+            "agent": "KnowledgeAgent",
+            "summary": "Searching knowledge base: \"payment-service java.net.SocketTimeoutException Read timed out from BankGatewayClient after http-client connection pool tuning deploy connection pool maxed out connection_acquire_wait_ms high health checks OK\"",
+            "payload": {
+                "query": "payment-service java.net.SocketTimeoutException Read timed out from BankGatewayClient after http-client connection pool tuning deploy connection pool maxed out connection_acquire_wait_ms high health checks OK"
+            }
+        },
+        {
+            "seq": 7,
+            "type": "CITATIONS_RETRIEVED",
+            "agent": "KnowledgeAgent",
+            "summary": "Retrieved 3 cited snippets",
+            "payload": {
+                "count": 3,
+                "citationIds": [
+                    "C1",
+                    "C2",
+                    "C3"
+                ],
+                "sourceNames": [
+                    "runbook-connection-pool-exhaustion.md",
+                    "postmortem-2025-09-payment-pool.md",
+                    "runbook-null-pointer.md"
+                ]
+            }
+        },
+        {
+            "seq": 8,
+            "type": "AGENT_HANDOFF",
+            "agent": "Orchestrator",
+            "summary": "Orchestrator -> RootCauseAgent",
+            "payload": {
+                "agent": "RootCauseAgent"
+            }
+        },
+        {
+            "seq": 9,
+            "type": "HYPOTHESES_PROPOSED",
+            "agent": "RootCauseAgent",
+            "summary": "Proposed 2 competing hypotheses",
+            "payload": {
+                "count": 2,
+                "hypotheses": [
+                    {
+                        "id": "H1",
+                        "statement": "Client-side connection-pool exhaustion introduced by the v3.2.0 http-client configuration change caused requests to queue waiting for a connection and time out locally, while the bank-gateway itself remained healthy.",
+                        "confidence": 0.8,
+                        "supportingEvidenceIds": [
+                            "E1",
+                            "E2",
+                            "E3",
+                            "E4",
+                            "E5",
+                            "E6"
+                        ],
+                        "supportingCitationIds": [
+                            "C1",
+                            "C2"
+                        ]
+                    },
+                    {
+                        "id": "H2",
+                        "statement": "Intermittent increased latency (or sporadic slow tails) in the bank-gateway for real payment requests (not surfaced by lightweight health-checks) caused connections to be held longer, driving the client pool to saturate and producing read timeouts in Payment-service.",
+                        "confidence": 0.3,
+                        "supportingEvidenceIds": [
+                            "E2",
+                            "E3",
+                            "E4",
+                            "E5",
+                            "E6"
+                        ],
+                        "supportingCitationIds": [
+                            "C1"
+                        ]
+                    }
+                ],
+                "afterRetry": 0
+            }
+        },
+        {
+            "seq": 10,
+            "type": "AGENT_HANDOFF",
+            "agent": "Orchestrator",
+            "summary": "Orchestrator -> CriticAgent",
+            "payload": {
+                "agent": "CriticAgent"
+            }
+        },
+        {
+            "seq": 11,
+            "type": "CRITIQUE",
+            "agent": "CriticAgent",
+            "summary": "Critiqued 2 hypotheses: H1=SUPPORTED, H2=REJECTED",
+            "payload": {
+                "critiques": [
+                    {
+                        "hypothesisId": "H1",
+                        "status": "SUPPORTED",
+                        "reasons": [
+                            "E1 shows a deploy at 2026-06-08T09:04:58.110Z that changed http-client connection pool config, correlating temporally with the spike that follows.",
+                            "E6 shows connection_pool active reached the configured max 5/5 at 09:05 and stayed there while connection_acquire_wait_ms_p95 jumped from single digits to 9,800 ms then 15,200 ms, directly supporting client-side queueing on the pool.",
+                            "E2 and E3 show SocketTimeoutException read timeouts beginning at 09:05:36 and continuing, consistent with requests timing out while waiting for a connection rather than downstream failures.",
+                            "E4 shows bank-gateway health-checks returned 200 OK with low latency (~115–121 ms) during the incident window, indicating the downstream remained healthy and contradicting a downstream outage.",
+                            "E5 shows error_rate_percent rose sharply in the same window, consistent with client-side timeouts caused by pool exhaustion.",
+                            "C1 (runbook RB-POOL-001) describes exactly this failure mode (client-side pool exhaustion after a config change) and recommends the exact diagnostics observed (check downstream health, check your own pool metrics, correlate with deploy).",
+                            "C2 (postmortem PM-2025-09-PAYMENT) documents a prior similar incident where a client pool tuning caused identical symptoms and misattribution to the downstream, strengthening the plausibility of this root cause."
+                        ]
+                    },
+                    {
+                        "hypothesisId": "H2",
+                        "status": "REJECTED",
+                        "reasons": [
+                            "E4 shows bank-gateway health-checks returned 200 OK with low latencies (~115–121 ms) at 09:05–09:07, which contradicts the claim of intermittent increased latency on the downstream.",
+                            "C1 explicitly states: if downstream p95 is normal and health-checks return 200 quickly, the downstream is NOT the problem — this runbook guidance contradicts the hypothesis that unseen downstream slow tails caused the pool saturation.",
+                            "No evidence item (E1–E6) shows increased bank-gateway latency for real payment requests; E2 and E3 show client-side SocketTimeoutExceptions but do not provide evidence that the bank-gateway was slow or that requests reached it, so the hypothesis lacks supporting evidence from the provided items.",
+                            "E6 demonstrates client-side pool saturation and large connection_acquire_wait_ms_p95, which is an alternative explanation that H2 does not address; the hypothesis fails to explain why health-checks remained fast (E4) while claiming real-payment latencies increased."
+                        ]
+                    }
+                ],
+                "supportedCount": 1
+            }
+        },
+        {
+            "seq": 12,
+            "type": "AGENT_HANDOFF",
+            "agent": "Orchestrator",
+            "summary": "Orchestrator -> JudgeAgent",
+            "payload": {
+                "agent": "JudgeAgent"
+            }
+        },
+        {
+            "seq": 13,
+            "type": "DECISION",
+            "agent": "JudgeAgent",
+            "summary": "Decision: RECOMMEND_REMEDIATION (selected H1)",
+            "payload": {
+                "type": "RECOMMEND_REMEDIATION",
+                "selectedHypothesisId": "H1",
+                "rationale": "Per priority rules: the Critic marked H1 as SUPPORTED and H2 as REJECTED. H1 explains the full set of observations (E1 deploy changed http-client pool; E6 pool at 5/5 and connection_acquire_wait_ms_p95 jumping to ~9,800–15,200 ms; E2/E3 repeated java.net.SocketTimeoutException read timeouts; E4 shows bank-gateway health-checks healthy and low latency; E5 error rate spike). Citations C1 and C2 explicitly describe this failure mode and a prior identical incident, supporting the mechanism. Therefore H1 best satisfies Critic support, evidence coverage, and citation backing.",
+                "retryCount": 0
+            }
+        },
+        {
+            "seq": 14,
+            "type": "FIX_DRAFTED",
+            "agent": "JudgeAgent",
+            "summary": "Drafted a proposed fix for H1 (draft only, not applied)",
+            "payload": {
+                "selectedHypothesisId": "H1",
+                "proposedFixChars": 1021
+            }
+        },
+        {
+            "seq": 15,
+            "type": "APPROVAL_GATE",
+            "agent": "Orchestrator",
+            "summary": "HARD STOP: fix is a draft awaiting human approval — the agent takes no action",
+            "payload": {
+                "decisionType": "RECOMMEND_REMEDIATION",
+                "selectedHypothesisId": "H1"
+            }
+        }
+    ]
+}

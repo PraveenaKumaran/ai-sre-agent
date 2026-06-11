@@ -1,0 +1,115 @@
+{
+  "description": "Evaluation set for the AI SRE multi-agent pipeline. Each incident has an expected outcome. 'decision' is RECOMMEND_REMEDIATION or ESCALATE (ESCALATE accepts ESCALATE_TO_HUMAN or INSUFFICIENT_EVIDENCE). 'rootCauseKeywords' must ALL appear (case-insensitive) in the root-cause statement or postmortem. 'citationAnyOf' passes if ANY listed source name is cited. The eval is scored honestly against whatever Foundry IQ actually returns: incidents whose knowledge is not indexed are EXPECTED to ground poorly.",
+  "incidents": [
+    {
+      "id": "EVAL-01",
+      "name": "order-service NPE — classic loyalty-tier (headline scenario 1)",
+      "service": "order-service",
+      "stackTrace": "java.lang.NullPointerException: Cannot invoke \"String.toUpperCase()\" because \"loyaltyTier\" is null\n  at com.shop.order.OrderService.applyLoyaltyDiscount(OrderService.java:42)\n  at com.shop.order.OrderService.processOrder(OrderService.java:27)",
+      "expected": {
+        "decision": "RECOMMEND_REMEDIATION",
+        "rootCauseKeywords": ["loyaltyTier", "null"],
+        "citationAnyOf": ["runbook-null-pointer.md", "postmortem-2025-11-order-service-npe.md"]
+      }
+    },
+    {
+      "id": "EVAL-02",
+      "name": "order-service NPE — terse one-line report",
+      "service": "order-service",
+      "stackTrace": "Orders failing with HTTP 500. java.lang.NullPointerException at OrderService.java:42",
+      "expected": {
+        "decision": "RECOMMEND_REMEDIATION",
+        "rootCauseKeywords": ["loyaltyTier", "null"],
+        "citationAnyOf": ["runbook-null-pointer.md", "postmortem-2025-11-order-service-npe.md"]
+      }
+    },
+    {
+      "id": "EVAL-03",
+      "name": "order-service NPE — reported from the controller frame",
+      "service": "order-service",
+      "stackTrace": "java.lang.NullPointerException\n  at com.shop.order.OrderController.createOrder(OrderController.java:31)\nSome customers cannot place orders since this morning's deploy.",
+      "expected": {
+        "decision": "RECOMMEND_REMEDIATION",
+        "rootCauseKeywords": ["loyaltyTier", "null"],
+        "citationAnyOf": ["runbook-null-pointer.md", "postmortem-2025-11-order-service-npe.md"]
+      }
+    },
+    {
+      "id": "EVAL-04",
+      "name": "order-service NPE — phrased as a customer-impact ticket",
+      "service": "order-service",
+      "stackTrace": "Support escalation: ~1 in 5 checkout attempts return 'internal error'. Logs mention NullPointerException in the order service loyalty discount step.",
+      "expected": {
+        "decision": "RECOMMEND_REMEDIATION",
+        "rootCauseKeywords": ["loyaltyTier", "null"],
+        "citationAnyOf": ["runbook-null-pointer.md", "postmortem-2025-11-order-service-npe.md"]
+      }
+    },
+    {
+      "id": "EVAL-05",
+      "name": "payment-service timeouts — the MISLEADING incident (headline scenario 2, retry demo)",
+      "service": "payment-service",
+      "stackTrace": "java.net.SocketTimeoutException: Read timed out\n  at com.shop.payment.BankGatewayClient.charge(BankGatewayClient.java:31)\n  at com.shop.payment.PaymentService.process(PaymentService.java:54)\nPayments to bank-gateway are timing out. Suspect bank-gateway outage.",
+      "expected": {
+        "decision": "RECOMMEND_REMEDIATION",
+        "rootCauseKeywords": ["pool", "config"],
+        "citationAnyOf": ["runbook-connection-pool-exhaustion.md", "postmortem-2025-09-payment-pool.md"]
+      }
+    },
+    {
+      "id": "EVAL-06",
+      "name": "payment-service timeouts — pool wait warning quoted",
+      "service": "payment-service",
+      "stackTrace": "Payment failures spiking. Logs show 'Connection acquire wait p95=14800ms (active=5 max=5)' and SocketTimeoutException from BankGatewayClient.",
+      "expected": {
+        "decision": "RECOMMEND_REMEDIATION",
+        "rootCauseKeywords": ["pool"],
+        "citationAnyOf": ["runbook-connection-pool-exhaustion.md", "postmortem-2025-09-payment-pool.md"]
+      }
+    },
+    {
+      "id": "EVAL-07",
+      "name": "payment-service timeouts — vague 5xx report after deploy",
+      "service": "payment-service",
+      "stackTrace": "5xx rate on /api/payments jumped from ~0% to >20% shortly after this morning's deploy. Intermittent read timeouts in logs.",
+      "expected": {
+        "decision": "RECOMMEND_REMEDIATION",
+        "rootCauseKeywords": ["pool"],
+        "citationAnyOf": ["runbook-connection-pool-exhaustion.md", "postmortem-2025-09-payment-pool.md"]
+      }
+    },
+    {
+      "id": "EVAL-08",
+      "name": "payment-service timeouts — on-call blames the gateway team",
+      "service": "payment-service",
+      "stackTrace": "Paging bank-gateway on-call: our payment-service gets SocketTimeoutException calling you since ~09:05. Please check your service.\n  at com.shop.payment.BankGatewayClient.charge(BankGatewayClient.java:31)",
+      "expected": {
+        "decision": "RECOMMEND_REMEDIATION",
+        "rootCauseKeywords": ["pool"],
+        "citationAnyOf": ["runbook-connection-pool-exhaustion.md", "postmortem-2025-09-payment-pool.md"]
+      }
+    },
+    {
+      "id": "EVAL-09",
+      "name": "checkout-service — UNKNOWN service, no observability data (SHOULD ESCALATE)",
+      "service": "checkout-service",
+      "stackTrace": "java.lang.NullPointerException\n  at com.shop.checkout.CartService.applyPromo(CartService.java:88)\nCustomers report empty-cart errors.",
+      "expected": {
+        "decision": "ESCALATE",
+        "rootCauseKeywords": [],
+        "citationAnyOf": []
+      }
+    },
+    {
+      "id": "EVAL-10",
+      "name": "order-service OutOfMemoryError — contradicts the observability data (SHOULD ESCALATE)",
+      "service": "order-service",
+      "stackTrace": "java.lang.OutOfMemoryError: Java heap space\n  at com.shop.order.ReportGenerator.buildDailyReport(ReportGenerator.java:203)\nHost rebooted twice in the last hour.",
+      "expected": {
+        "decision": "ESCALATE",
+        "rootCauseKeywords": [],
+        "citationAnyOf": []
+      }
+    }
+  ]
+}
