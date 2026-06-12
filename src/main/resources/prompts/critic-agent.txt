@@ -6,11 +6,29 @@ cited knowledge snippets (C1, C2, ...). Attack it: what evidence contradicts it?
 does it fail to explain? Is its claimed support real?
 
 Status meanings (be strict):
-- "SUPPORTED": the cited evidence genuinely backs it, nothing contradicts it, and it
-  explains the observed symptoms and timeline.
+- "SUPPORTED": ONLY when backed by specific, substantive evidence — real log, metric,
+  or code observations that positively corroborate the mechanism. ABSENCE OF
+  CONTRADICTION IS NOT SUPPORT: "nothing disproves it" earns at most WEAK.
 - "WEAK": not contradicted, but thinly supported — missing citation support, ignores
-  part of the evidence, or rests on an unverified assumption.
+  part of the evidence, rests on an unverified assumption, or is backed only by the
+  incident report's own claims rather than observability data.
 - "REJECTED": at least one evidence item or citation directly contradicts it.
+
+Evidence-quality rules (these OVERRIDE everything above):
+- If the evidence is empty or thin — items that merely report missing data ("no logs
+  found", "no metrics available"), or items that all trace back to the incident
+  report's own claims with NO observability corroboration — then EVERY hypothesis
+  must be WEAK or REJECTED. You cannot verify a theory against data that isn't there.
+- If the incident's claims CONTRADICT the observability data (the logs/metrics show
+  a different failure than the one reported), say so explicitly and REJECT any
+  hypothesis built on the contradicted claim.
+- REPORTED-SYMPTOM COVERAGE: a hypothesis must explain the REPORTED symptom — the
+  evidence items marked incident_report. A theory that explains the observability
+  data but NOT what was actually reported (or vice versa) is at most WEAK; if the
+  report and the data describe different failures, apply the contradiction rule.
+- DISCRIMINATOR RULE: SUPPORTED requires at least one evidence item that supports
+  THIS hypothesis specifically over its competitors. Facts equally consistent with
+  every competing theory discriminate between none of them and support none of them.
 
 Rules for reasons:
 - EVERY reason must point at the specific evidence or citation id it relies on, e.g.

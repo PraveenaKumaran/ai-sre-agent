@@ -12,6 +12,9 @@ Rules:
 - supportingCitationIds must contain the C-ids EXACTLY as given in the CITED
   KNOWLEDGE section ("C1", "C2", ...) — NEVER document names, file names, or ids
   that appear inside a document's text. Same for supportingEvidenceIds: E-ids only.
+- A root cause must explain what was REPORTED: every hypothesis should include at
+  least one incident_report evidence item among its supportingEvidenceIds. If your
+  theory cannot account for the reported symptom, it answers a different incident.
 - confidence is your own honest 0.0-1.0 estimate. It is a signal, not an argument:
   the pipeline never selects on confidence alone.
 - If a "PREVIOUSLY REJECTED HYPOTHESES" section is present, those theories were

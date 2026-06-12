@@ -15,11 +15,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class AgentPipelineTest {
 
-    private static final String TRIAGE_REPLY = """
+    // TriageAgent now extracts per channel: one reply for the incident report,
+    // one for observability. Code assigns ids sequentially: E1 then E2, E3.
+    private static final String TRIAGE_REPORT_REPLY = """
             {"evidence":[
-              {"id":"E1","type":"symptom","statement":"NullPointerException thrown at OrderService.java:42 when applying loyalty discount","source":"stack_trace"},
-              {"id":"E2","type":"metric","statement":"error_rate rose from 0.3% to 19% at 09:14","source":"metrics"},
-              {"id":"E3","type":"timeline","statement":"Deploy v2.4.0 with legacy customer import went out at 09:13, one minute before the spike","source":"metrics"}]}
+              {"type":"symptom","statement":"NullPointerException thrown at OrderService.java:42 when applying loyalty discount"}]}
+            """;
+    private static final String TRIAGE_OBS_REPLY = """
+            {"evidence":[
+              {"type":"metric","statement":"error_rate rose from 0.3% to 19% at 09:14"},
+              {"type":"timeline","statement":"Deploy v2.4.0 with legacy customer import went out at 09:13, one minute before the spike"}]}
             """;
 
     private static final String KNOWLEDGE_REPLY = """
@@ -48,18 +53,23 @@ class AgentPipelineTest {
     @Test
     void fullPipelineProducesGroundedDecisionWithProvenanceAndTrace() {
         PipelineTestSupport.ScriptedModel model = new PipelineTestSupport.ScriptedModel(
-                List.of(TRIAGE_REPLY, KNOWLEDGE_REPLY, ROOTCAUSE_REPLY, CRITIC_REPLY, JUDGE_REPLY));
+                List.of(TRIAGE_REPORT_REPLY, TRIAGE_OBS_REPLY, KNOWLEDGE_REPLY,
+                        ROOTCAUSE_REPLY, CRITIC_REPLY, JUDGE_REPLY));
 
         IncidentContext ctx = PipelineTestSupport.orchestrator(model).run(new IncidentRequest(
                 "order-service",
                 "java.lang.NullPointerException at OrderService.applyLoyaltyDiscount(OrderService.java:42)"));
 
-        // Exactly one model call per agent, in order.
-        assertThat(model.calls).isEqualTo(5);
+        // One model call per agent, except TriageAgent's two per-channel calls.
+        assertThat(model.calls).isEqualTo(6);
 
-        // TriageAgent: structured evidence with ids.
+        // TriageAgent: structured evidence with code-assigned ids AND code-assigned
+        // provenance (report vs observability — never model-inferred).
         assertThat(ctx.evidence()).hasSize(3);
-        assertThat(ctx.findEvidence("E3")).isPresent();
+        assertThat(ctx.findEvidence("E1").orElseThrow().source())
+                .isEqualTo(Evidence.SOURCE_INCIDENT_REPORT);
+        assertThat(ctx.findEvidence("E3").orElseThrow().source())
+                .isEqualTo(Evidence.SOURCE_OBSERVABILITY);
 
         // KnowledgeAgent (IQ off -> bundled fallback docs): citations C1/C2 with real names.
         assertThat(ctx.citations()).extracting(Citation::id).containsExactly("C1", "C2");
@@ -106,7 +116,7 @@ class AgentPipelineTest {
     @Test
     void malformedJudgeReplyEscalatesInsteadOfCrashing() {
         PipelineTestSupport.ScriptedModel model = new PipelineTestSupport.ScriptedModel(
-                List.of(TRIAGE_REPLY, KNOWLEDGE_REPLY, ROOTCAUSE_REPLY, CRITIC_REPLY,
+                List.of(TRIAGE_REPORT_REPLY, TRIAGE_OBS_REPLY, KNOWLEDGE_REPLY, ROOTCAUSE_REPLY, CRITIC_REPLY,
                         "I think we should probably restart something?")); // no JSON
 
         IncidentContext ctx = PipelineTestSupport.orchestrator(model).run(

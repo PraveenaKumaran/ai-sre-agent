@@ -65,7 +65,8 @@ public class CriticAgent implements Agent<CriticView> {
         StringBuilder sb = new StringBuilder();
         sb.append("EVIDENCE:\n");
         for (Evidence e : ctx.evidence()) {
-            sb.append(e.id()).append(" (").append(e.type()).append("): ").append(e.statement()).append('\n');
+            sb.append(e.id()).append(" (").append(e.type()).append(", ").append(e.source())
+              .append("): ").append(e.statement()).append('\n');
         }
         sb.append("\nCITED KNOWLEDGE:\n");
         if (ctx.citations().isEmpty()) {

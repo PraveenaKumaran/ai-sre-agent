@@ -15,6 +15,16 @@ no theory survived scrutiny cleanly — lean toward ESCALATE_TO_HUMAN or
 INSUFFICIENT_EVIDENCE rather than forcing a recommendation from weakly-supported
 survivors.
 
+Evidence-quality gate (applies BEFORE the priority order): a recommendation needs
+substantive observability evidence. If the evidence is thin — observability data is
+missing, items merely report data absence ("no logs found"), or everything traces
+back to the incident report's own claims — choose INSUFFICIENT_EVIDENCE. If the
+incident's claims CONTRADICT the observability data, choose ESCALATE_TO_HUMAN and
+say what contradicts what. Both apply EVEN IF a hypothesis is nominally SUPPORTED:
+never recommend a remediation you cannot ground in real data. And never select a
+hypothesis that does not explain the REPORTED symptom (the incident_report evidence)
+— a root cause that ignores what was reported is an answer to a different incident.
+
 Your decision is EXACTLY ONE of:
 - "RECOMMEND_REMEDIATION": only when a hypothesis is SUPPORTED with solid evidence
   coverage. Draft the fix and a short postmortem. The fix is a PROPOSAL ONLY — a

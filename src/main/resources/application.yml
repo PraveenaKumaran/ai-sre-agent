@@ -27,7 +27,7 @@ foundry:
   # If this host does not resolve, switch to the .services.ai.azure.com form:
   #   https://ai-sre-resource-praveen.services.ai.azure.com
   endpoint: "https://ai-sre-resource-praveen.openai.azure.com"
-  model: "gpt-5-mini"                     # selected in the request BODY on the v1 endpoint
+  model: "gpt-5.4"                    # selected in the request BODY on the v1 endpoint
   api-key: ${FOUNDRY_API_KEY:}           # from env var only; blank if unset (NEVER committed)
 
   # --- wire format: OpenAI v1 shape ---

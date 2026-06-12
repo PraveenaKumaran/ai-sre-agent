@@ -68,7 +68,8 @@ public class RootCauseAgent implements Agent<RootCauseView> {
         StringBuilder sb = new StringBuilder();
         sb.append("Service: ").append(ctx.service()).append("\n\nEVIDENCE:\n");
         for (Evidence e : ctx.evidence()) {
-            sb.append(e.id()).append(" (").append(e.type()).append("): ").append(e.statement()).append('\n');
+            sb.append(e.id()).append(" (").append(e.type()).append(", ").append(e.source())
+              .append("): ").append(e.statement()).append('\n');
         }
         sb.append("\nCITED KNOWLEDGE:\n");
         if (ctx.citations().isEmpty()) {

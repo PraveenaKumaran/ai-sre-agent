@@ -41,6 +41,13 @@ public class AgentOrchestrator {
      */
     static final int MAX_RETRIES = 2;
 
+    /** A recommendation must rest on at least this many real, substantive evidence items. */
+    static final int MIN_SUBSTANTIVE_EVIDENCE = 2;
+
+    /** Evidence that merely reports missing data is not substantive support. */
+    private static final java.util.regex.Pattern NO_DATA_STATEMENT = java.util.regex.Pattern.compile(
+            "(?i)\\bno\\s+(logs?|metrics?|data)\\b.*\\b(found|available|exist)");
+
     private final TriageAgent triageAgent;
     private final KnowledgeAgent knowledgeAgent;
     private final RootCauseAgent rootCauseAgent;
@@ -149,6 +156,8 @@ public class AgentOrchestrator {
         }
 
         handOffTo(ctx, judgeAgent);
+        enforceEvidenceGuard(ctx);
+        enforceReportedSymptomGuard(ctx);
 
         // ---- Terminal safety event: every run ends at the gate or an escalation. ----
         Decision decision = ctx.decision();
@@ -221,6 +230,102 @@ public class AgentOrchestrator {
     }
 
     /**
+     * Deterministic evidence guard (model proposes, code verifies): a RECOMMEND
+     * decision must rest on at least {@link #MIN_SUBSTANTIVE_EVIDENCE} evidence
+     * items that (a) actually exist in the context and (b) are substantive — an
+     * item that merely reports missing data ("no logs found") is not support.
+     * Anything thinner is overridden to INSUFFICIENT_EVIDENCE, with a
+     * GUARD_OVERRIDE trace event so the correction is visible in the glass box.
+     *
+     * This is the code backstop behind the Critic/Judge prompt rules: even if both
+     * models bless a theory built on thin air, the recommendation cannot pass.
+     */
+    private void enforceEvidenceGuard(IncidentContext ctx) {
+        Decision decision = ctx.decision();
+        if (decision.type() != DecisionType.RECOMMEND_REMEDIATION) {
+            return; // guard only constrains recommendations
+        }
+        List<String> citedIds = ctx.findHypothesis(decision.selectedHypothesisId())
+                .map(Hypothesis::supportingEvidenceIds)
+                .orElse(List.of());
+        List<String> substantive = citedIds.stream()
+                .filter(id -> ctx.findEvidence(id)
+                        .map(e -> !NO_DATA_STATEMENT.matcher(e.statement()).find())
+                        .orElse(false)) // ids that don't resolve to real evidence don't count
+                .toList();
+
+        if (substantive.size() >= MIN_SUBSTANTIVE_EVIDENCE) {
+            return;
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("from", decision.type().name());
+        payload.put("to", DecisionType.INSUFFICIENT_EVIDENCE.name());
+        payload.put("selectedHypothesisId", decision.selectedHypothesisId());
+        payload.put("citedEvidenceIds", citedIds);
+        payload.put("substantiveEvidenceIds", substantive);
+        payload.put("requiredMinimum", MIN_SUBSTANTIVE_EVIDENCE);
+        ctx.trace().add(TraceEventType.GUARD_OVERRIDE, "Orchestrator",
+                "Deterministic guard overrode RECOMMEND_REMEDIATION: only " + substantive.size()
+                        + " substantive evidence item(s) behind " + decision.selectedHypothesisId()
+                        + " (minimum " + MIN_SUBSTANTIVE_EVIDENCE + ")", payload);
+
+        ctx.setDecision(Decision.escalate(DecisionType.INSUFFICIENT_EVIDENCE,
+                "Deterministic guard: the recommended hypothesis " + decision.selectedHypothesisId()
+                        + " cites only " + substantive.size() + " substantive evidence item(s); a "
+                        + "remediation requires at least " + MIN_SUBSTANTIVE_EVIDENCE
+                        + ". Escalating instead of acting on thin evidence."));
+    }
+
+    /**
+     * Deterministic reported-symptom guard (model proposes, code verifies): a
+     * RECOMMEND decision must rest on at least one evidence item derived from the
+     * INCIDENT REPORT itself — provenance is code-assigned by the TriageAgent's
+     * per-channel extraction, never model-inferred. A root cause that explains the
+     * observability data but not what was actually reported (EVAL-10's failure
+     * mode: NPE theory recommended for an OOM report) is an answer to a different
+     * incident, so it is overridden to ESCALATE_TO_HUMAN with a GUARD_OVERRIDE
+     * trace event.
+     */
+    private void enforceReportedSymptomGuard(IncidentContext ctx) {
+        Decision decision = ctx.decision();
+        if (decision.type() != DecisionType.RECOMMEND_REMEDIATION) {
+            return; // guard only constrains recommendations
+        }
+        List<String> citedIds = ctx.findHypothesis(decision.selectedHypothesisId())
+                .map(Hypothesis::supportingEvidenceIds)
+                .orElse(List.of());
+
+        // id -> source for everything the winner cites (for the trace payload).
+        Map<String, String> citedSources = new LinkedHashMap<>();
+        for (String id : citedIds) {
+            citedSources.put(id, ctx.findEvidence(id).map(Evidence::source).orElse("unknown"));
+        }
+        boolean citesReportedSymptom = citedIds.stream()
+                .anyMatch(id -> ctx.findEvidence(id).map(Evidence::isReportDerived).orElse(false));
+        if (citesReportedSymptom) {
+            return;
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("from", decision.type().name());
+        payload.put("to", DecisionType.ESCALATE_TO_HUMAN.name());
+        payload.put("selectedHypothesisId", decision.selectedHypothesisId());
+        payload.put("citedEvidenceSources", citedSources);
+        payload.put("missingRequirement",
+                ">=1 supporting evidence item with source=" + Evidence.SOURCE_INCIDENT_REPORT);
+        ctx.trace().add(TraceEventType.GUARD_OVERRIDE, "Orchestrator",
+                "Deterministic guard overrode RECOMMEND_REMEDIATION: "
+                        + decision.selectedHypothesisId() + " cites no incident-report-derived evidence"
+                        + " — the theory does not cover the reported symptom", payload);
+
+        ctx.setDecision(Decision.escalate(DecisionType.ESCALATE_TO_HUMAN,
+                "Deterministic guard: the recommended hypothesis " + decision.selectedHypothesisId()
+                        + " cites no evidence derived from the incident report, so it does not "
+                        + "address the reported symptom. Escalating to a human."));
+    }
+
+    /**
      * Bundle each current hypothesis with the Critic's verdict and reasons into a
      * self-contained snapshot. Called only when NO hypothesis is SUPPORTED, so the
      * whole round is being killed — every hypothesis gets snapshotted with its
@@ -284,11 +389,13 @@ public class AgentOrchestrator {
 
         ctx.addEvidence(List.of(
                 new Evidence("E1", "symptom",
-                        "NullPointerException thrown at OrderService.java:42 when applying loyalty discount", "stack_trace"),
+                        "NullPointerException thrown at OrderService.java:42 when applying loyalty discount",
+                        Evidence.SOURCE_INCIDENT_REPORT),
                 new Evidence("E2", "metric",
-                        "error_rate rose from 0.3% to 19% at 09:14", "metrics"),
+                        "error_rate rose from 0.3% to 19% at 09:14", Evidence.SOURCE_OBSERVABILITY),
                 new Evidence("E3", "timeline",
-                        "Deploy v2.4.0 (legacy customer import) went out at 09:13, one minute before the spike", "metrics")));
+                        "Deploy v2.4.0 (legacy customer import) went out at 09:13, one minute before the spike",
+                        Evidence.SOURCE_OBSERVABILITY)));
         ctx.trace().add(TraceEventType.EVIDENCE_EXTRACTED, "TriageAgent",
                 "[OFFLINE STUB] Extracted 3 canned evidence items",
                 Map.of("count", 3, "evidence", ctx.evidence()));

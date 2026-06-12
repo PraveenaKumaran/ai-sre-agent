@@ -71,7 +71,8 @@ public class JudgeAgent implements Agent<JudgeView> {
 
         sb.append("\nEVIDENCE:\n");
         for (Evidence e : ctx.evidence()) {
-            sb.append(e.id()).append(" (").append(e.type()).append("): ").append(e.statement()).append('\n');
+            sb.append(e.id()).append(" (").append(e.type()).append(", ").append(e.source())
+              .append("): ").append(e.statement()).append('\n');
         }
         sb.append("\nCITATIONS:\n");
         if (ctx.citations().isEmpty()) {

@@ -13,9 +13,15 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Agent 1: turns the raw incident signals (stack trace, logs, metrics — all
- * redacted at the boundary before reaching this agent) into structured
- * {@link Evidence} items with stable ids (E1, E2, ...).
+ * Agent 1: turns the raw incident signals (all redacted at the boundary) into
+ * structured {@link Evidence} items with stable ids (E1, E2, ...).
+ *
+ * STRUCTURAL PROVENANCE: extraction runs as TWO model calls — one over the
+ * submitted incident report, one over the tool-gathered observability data
+ * (logs + metrics). The CODE stamps each item's {@code source} from the call
+ * that produced it ({@code incident_report} vs {@code observability}) and
+ * assigns the E-ids; neither is ever inferred by the model. Downstream, the
+ * reported-symptom guard and the Critic's coverage rules key on this field.
  *
  * Observation only — the prompt forbids diagnosis. The triage step is also a
  * defense-in-depth MITIGATION against prompt injection from untrusted log input
@@ -42,63 +48,77 @@ public class TriageAgent implements Agent<TriageView> {
 
     @Override
     public void execute(TriageView ctx) {
-        String input = """
+        List<Evidence> all = new ArrayList<>();
+
+        // Call 1: the incident report (the request payload) -> source stamped by code.
+        String reportInput = """
+                INCIDENT REPORT (as submitted by the reporter):
                 Service: %s
 
-                Stack trace / error:
                 %s
+                """.formatted(ctx.service(), ctx.stackTrace());
+        all.addAll(extract(reportInput, Evidence.SOURCE_INCIDENT_REPORT, all.size()));
+
+        // Call 2: tool-gathered observability data -> source stamped by code.
+        String observabilityInput = """
+                OBSERVABILITY DATA (gathered from monitoring tools):
+                Service: %s
 
                 Recent logs:
                 %s
 
                 Metrics:
                 %s
-                """.formatted(ctx.service(), ctx.stackTrace(), ctx.redactedLogs(), ctx.redactedMetrics());
+                """.formatted(ctx.service(), ctx.redactedLogs(), ctx.redactedMetrics());
+        all.addAll(extract(observabilityInput, Evidence.SOURCE_OBSERVABILITY, all.size()));
 
+        ctx.addEvidence(all);
+
+        // Trace: statements derive from redacted input, so they are payload-safe.
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("count", all.size());
+        payload.put("reportDerivedCount", all.stream().filter(Evidence::isReportDerived).count());
+        payload.put("evidence", all);
+        ctx.trace().add(TraceEventType.EVIDENCE_EXTRACTED, name(),
+                "Extracted " + all.size() + " evidence items ("
+                        + all.stream().filter(Evidence::isReportDerived).count() + " from the incident report)",
+                payload);
+    }
+
+    /** One extraction call over one input channel; ids and source are assigned HERE. */
+    private List<Evidence> extract(String input, String source, int idOffset) {
         ModelTurn turn = model.nextTurn(
                 List.of(ChatMessage.system(systemPrompt), ChatMessage.user(input)),
                 List.of()); // no tools: this agent only structures what it was given
-
-        List<Evidence> evidence = parse(turn.finalContent());
-        ctx.addEvidence(evidence);
-
-        // Trace: evidence statements are derived from redacted input, so they are
-        // allowed in the payload (the minimization whitelist). Raw logs are NOT.
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("count", evidence.size());
-        payload.put("evidence", evidence);
-        ctx.trace().add(TraceEventType.EVIDENCE_EXTRACTED, name(),
-                "Extracted " + evidence.size() + " evidence items", payload);
+        return parse(turn.finalContent(), source, idOffset);
     }
 
     /**
-     * Parse {"evidence":[{id,type,statement,source}...]}. Graceful degrade: a
-     * malformed reply yields an EMPTY list (the pipeline then naturally heads
-     * toward escalation for lack of evidence) — never an exception.
+     * Parse {"evidence":[{type,statement}...]}. The model's id/source fields (if
+     * any) are IGNORED — ids continue sequentially across both calls and source is
+     * the code-known provenance. Graceful degrade: a malformed reply yields an
+     * EMPTY list for that channel — never an exception.
      */
-    private List<Evidence> parse(String content) {
+    private List<Evidence> parse(String content, String source, int idOffset) {
         List<Evidence> out = new ArrayList<>();
         String jsonPart = ModelJson.extractObject(content);
         if (jsonPart == null) {
             return out;
         }
         try {
-            JsonNode items = json.readTree(jsonPart).path("evidence");
-            int i = 0;
-            for (JsonNode n : items) {
+            for (JsonNode n : json.readTree(jsonPart).path("evidence")) {
                 String statement = n.path("statement").asText("");
                 if (statement.isBlank()) {
                     continue; // an evidence item with no fact is useless
                 }
-                i++;
                 out.add(new Evidence(
-                        n.path("id").asText("E" + i),
+                        "E" + (idOffset + out.size() + 1),
                         n.path("type").asText("log"),
                         statement,
-                        n.path("source").asText("incident")));
+                        source));
             }
         } catch (Exception malformed) {
-            return List.of(); // degrade to "no evidence extracted"
+            return List.of(); // degrade to "no evidence extracted" for this channel
         }
         return out;
     }

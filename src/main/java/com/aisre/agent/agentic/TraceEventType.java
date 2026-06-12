@@ -21,6 +21,8 @@ public enum TraceEventType {
     HYPOTHESIS_DISCARDED,
     RETRY_TRIGGERED,
     DECISION,
+    /** A deterministic safety guard overrode the Judge's decision (model proposes, code verifies). */
+    GUARD_OVERRIDE,
     FIX_DRAFTED,
     APPROVAL_GATE,
     ESCALATION

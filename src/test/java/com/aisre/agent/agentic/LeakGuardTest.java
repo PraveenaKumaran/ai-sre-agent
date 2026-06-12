@@ -40,7 +40,10 @@ class LeakGuardTest {
 
         PipelineTestSupport.ScriptedModel model = new PipelineTestSupport.ScriptedModel(List.of(
                 """
-                {"evidence":[{"id":"E1","type":"symptom","statement":"NPE at OrderService.java:42","source":"stack_trace"}]}
+                {"evidence":[{"type":"symptom","statement":"NPE at OrderService.java:42"}]}
+                """,
+                """
+                {"evidence":[{"type":"metric","statement":"error_rate elevated since 09:14"}]}
                 """,
                 """
                 {"query":"NullPointerException order-service"}

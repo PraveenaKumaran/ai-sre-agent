@@ -1,12 +1,12 @@
 package com.aisre.agent.agentic;
 
-import com.aisre.agent.config.FoundryProperties;
-import org.junit.jupiter.api.Test;
-
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Test;
+
+import com.aisre.agent.config.FoundryProperties;
 
 /**
  * Unit tests for the eval runner's scoring rules — no model, no keys. The live run
@@ -46,7 +46,7 @@ class EvalScoringTest {
         // toMarkdown only needs FoundryProperties for its header line.
         FoundryProperties.Iq iqOff = new FoundryProperties.Iq(false, "", "", "", "", "", 4);
         EvalRunner runner = new EvalRunner(null, null,
-                new FoundryProperties(true, "", "gpt-5-mini", "", "", "", "api-key", "", "low", 4000, iqOff),
+                new FoundryProperties(true, "", "gpt-5.4", "", "", "", "api-key", "", "low", 4000, iqOff),
                 null, null);
 
         String md = runner.toMarkdown(List.of(

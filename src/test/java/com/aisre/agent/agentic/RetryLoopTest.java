@@ -18,10 +18,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class RetryLoopTest {
 
-    private static final String TRIAGE_REPLY = """
-            {"evidence":[
-              {"id":"E1","type":"symptom","statement":"NPE at OrderService.java:42","source":"stack_trace"},
-              {"id":"E2","type":"timeline","statement":"Errors started at 09:14, right after the 09:13 deploy","source":"metrics"}]}
+    // Per-channel triage replies: E1 from the incident report, E2 from observability.
+    private static final String TRIAGE_REPORT_REPLY = """
+            {"evidence":[{"type":"symptom","statement":"NPE at OrderService.java:42"}]}
+            """;
+    private static final String TRIAGE_OBS_REPLY = """
+            {"evidence":[{"type":"timeline","statement":"Errors started at 09:14, right after the 09:13 deploy"}]}
             """;
 
     private static final String KNOWLEDGE_REPLY = """
@@ -45,7 +47,7 @@ class RetryLoopTest {
                   "supportingCitationIds":["RB-NPE-001","postmortem-2025-11-order-service-npe.md","C1","totally-bogus"]}]}
                 """;
         PipelineTestSupport.ScriptedModel[] m = new PipelineTestSupport.ScriptedModel[1];
-        IncidentContext ctx = run(List.of(TRIAGE_REPLY, KNOWLEDGE_REPLY, messyRootCause,
+        IncidentContext ctx = run(List.of(TRIAGE_REPORT_REPLY, TRIAGE_OBS_REPLY, KNOWLEDGE_REPLY, messyRootCause,
                 """
                 {"critiques":[{"hypothesisId":"H1","status":"SUPPORTED","reasons":["E1 confirms; C1 documents the pattern"]}]}
                 """,
@@ -73,7 +75,7 @@ class RetryLoopTest {
     void retryFiresWhenNothingIsSupportedAndFeedsRejectionsBack() {
         PipelineTestSupport.ScriptedModel[] m = new PipelineTestSupport.ScriptedModel[1];
         IncidentContext ctx = run(List.of(
-                TRIAGE_REPLY, KNOWLEDGE_REPLY,
+                TRIAGE_REPORT_REPLY, TRIAGE_OBS_REPLY, KNOWLEDGE_REPLY,
                 // Round 1: two theories...
                 """
                 {"hypotheses":[
@@ -119,9 +121,9 @@ class RetryLoopTest {
         List<DiscardedHypothesis> rejected = (List<DiscardedHypothesis>) retry.payload().get("rejectedHypotheses");
         assertThat(rejected).hasSize(2);
 
-        // Self-reflection: the SECOND RootCause call (model call #5) was shown the
-        // killed theories WITH the Critic's reasons.
-        String secondRootCauseInput = m[0].userMessages.get(4);
+        // Self-reflection: the SECOND RootCause call (model call #6: 2 triage,
+        // knowledge, rc1, critic1, rc2) was shown the killed theories WITH reasons.
+        String secondRootCauseInput = m[0].userMessages.get(5);
         assertThat(secondRootCauseInput)
                 .contains("PREVIOUSLY REJECTED HYPOTHESES")
                 .contains("bank-gateway")
@@ -150,7 +152,7 @@ class RetryLoopTest {
                 """;
         PipelineTestSupport.ScriptedModel[] m = new PipelineTestSupport.ScriptedModel[1];
         IncidentContext ctx = run(List.of(
-                TRIAGE_REPLY, KNOWLEDGE_REPLY,
+                TRIAGE_REPORT_REPLY, TRIAGE_OBS_REPLY, KNOWLEDGE_REPLY,
                 weakRound1,
                 """
                 {"critiques":[{"hypothesisId":"H1","status":"WEAK","reasons":["No supporting citation found"]}]}
@@ -169,9 +171,10 @@ class RetryLoopTest {
                  "proposedFix":"","postmortem":""}
                 """), m);
 
-        // Exactly 2 retries (the cap), 9 model calls total, then the Judge ran anyway.
+        // Exactly 2 retries (the cap), 10 model calls total (2 triage + knowledge
+        // + 3x(rootcause+critic) + judge), then the Judge ran anyway.
         assertThat(ctx.retryCount()).isEqualTo(2);
-        assertThat(m[0].calls).isEqualTo(9);
+        assertThat(m[0].calls).isEqualTo(10);
         assertThat(ctx.trace().events().stream()
                 .filter(e -> e.type() == TraceEventType.RETRY_TRIGGERED).count()).isEqualTo(2);
 
