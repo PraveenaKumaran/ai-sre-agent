@@ -1,15 +1,16 @@
 package com.aisre.agent.ai;
 
+import java.util.ArrayList;
+import java.util.List;
+
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+
 import com.aisre.agent.config.FoundryProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
-
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Calls the Microsoft Foundry model API over HTTPS and turns the raw HTTP reply
@@ -97,7 +98,7 @@ public class FoundryModelClient implements ModelClient {
         // On the OpenAI v1 endpoint the model is selected here in the body.
         root.put("model", props.model());
 
-        // gpt-5-mini is a REASONING model: it rejects "temperature", and uses
+        // GPT-5.4 is a REASONING model: it rejects "temperature", and uses
         // "max_completion_tokens" (not "max_tokens"). We send "reasoning_effort"
         // to control how much it thinks. All three come from config so a different
         // (non-reasoning) model can be configured later without code changes.

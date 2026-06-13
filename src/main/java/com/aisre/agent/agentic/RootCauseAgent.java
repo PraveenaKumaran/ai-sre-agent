@@ -1,16 +1,17 @@
 package com.aisre.agent.agentic;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Service;
+
 import com.aisre.agent.ai.ChatMessage;
 import com.aisre.agent.ai.ModelClient;
 import com.aisre.agent.ai.ModelTurn;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.stereotype.Service;
-
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 
 /**
  * Agent 3: proposes 2-3 COMPETING root-cause hypotheses, each carrying its

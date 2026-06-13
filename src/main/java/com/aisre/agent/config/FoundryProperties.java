@@ -26,7 +26,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *                   (common values: "api-key" for key auth, "Authorization" for tokens).
  * @param authScheme prefix put before the credential value, e.g. "Bearer " for
  *                   Authorization, or "" (empty) for an api-key header. VERIFY ON LEARN.
- * @param reasoningEffort for reasoning models (e.g. gpt-5-mini): "low"/"medium"/"high".
+ * @param reasoningEffort for reasoning models (e.g. GPT-5.4): "low"/"medium"/"high".
  *                   Sent as the {@code reasoning_effort} body field. Leave blank to omit.
  * @param maxCompletionTokens cap on the reply size, sent as {@code max_completion_tokens}
  *                   (reasoning models reject the older {@code max_tokens}). <=0 omits it.

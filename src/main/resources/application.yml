@@ -37,7 +37,7 @@ foundry:
   auth-header: "api-key"                 # key-auth header name
   auth-scheme: ""                        # "" -> header value is the raw key (no "Bearer " prefix)
 
-  # --- reasoning-model params (gpt-5-mini) ---
+  # --- reasoning-model params (GPT-5.4) ---
   reasoning-effort: "low"                # how hard the model thinks; "" to omit
   max-completion-tokens: 4000            # reply cap (reasoning models use this, NOT max_tokens)
 
