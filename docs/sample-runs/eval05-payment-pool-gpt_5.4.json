@@ -1,0 +1,793 @@
+{
+    "incidentId": "INC-fd6e0f7b",
+    "service": "payment-service",
+    "citedSources": [
+        "runbook-connection-pool-exhaustion.md",
+        "postmortem-2025-09-payment-pool.md"
+    ],
+    "proposedFix": "Proposal only, pending human approval: roll back or revise the v3.2.0 HTTP-client connection-pool tuning in payment-service, restoring previously known-good pool behavior and validating that the client is no longer saturating at 5/5 under normal load. As part of the approved change, review the effective pool configuration introduced in v3.2.0, ensure connection acquisition does not wait near request timeout thresholds, and add a deployment check that monitors pool saturation, connection_acquire_wait_ms_p95, and payment timeout rate immediately after release.",
+    "postmortem": "A payment-service regression was introduced with deploy v3.2.0 (E5), after which error rate increased sharply (E6). During the incident, payment-service logged SocketTimeoutException read timeouts (E7) matching the reported symptom (E1, E4), while its HTTP connection pool remained saturated at 5/5 (E8) and connection acquisition waits rose to 9.8-15.2 seconds (E9). At the same time, bank-gateway latency stayed normal at 116-122 ms (E10), indicating the failures were most consistent with client-side pool exhaustion rather than downstream slowness. This aligns with runbook-connection-pool-exhaustion.md and postmortem-2025-09-payment-pool.md, which describe timeout spikes with healthy downstream latency as a signature of local connection-pool exhaustion.",
+    "confidence": 0.89,
+    "status": "AWAITING_APPROVAL",
+    "evidence": [
+        {
+            "id": "E1",
+            "type": "log",
+            "statement": "A java.net.SocketTimeoutException with message \"Read timed out\" is shown in the report.",
+            "source": "incident_report",
+            "reportDerived": true
+        },
+        {
+            "id": "E2",
+            "type": "code",
+            "statement": "The stack trace includes com.shop.payment.BankGatewayClient.charge at BankGatewayClient.java:31.",
+            "source": "incident_report",
+            "reportDerived": true
+        },
+        {
+            "id": "E3",
+            "type": "code",
+            "statement": "The stack trace includes com.shop.payment.PaymentService.process at PaymentService.java:54.",
+            "source": "incident_report",
+            "reportDerived": true
+        },
+        {
+            "id": "E4",
+            "type": "symptom",
+            "statement": "The report states that payments to bank-gateway are timing out.",
+            "source": "incident_report",
+            "reportDerived": true
+        },
+        {
+            "id": "E5",
+            "type": "timeline",
+            "statement": "At 2026-06-08T09:04:58.110Z, payment-service applied deploy v3.2.0 with an \"http-client configuration update (connection pool tuning)\".",
+            "source": "observability",
+            "reportDerived": false
+        },
+        {
+            "id": "E6",
+            "type": "metric",
+            "statement": "payment-service error_rate_percent increased from 0.2% at 09:03 to 6.4% at 09:05 and 21.3% at 09:07.",
+            "source": "observability",
+            "reportDerived": false
+        },
+        {
+            "id": "E7",
+            "type": "log",
+            "statement": "At 2026-06-08T09:05:36.511Z, 2026-06-08T09:05:56.834Z, and 2026-06-08T09:06:31.118Z, PaymentService logged payment failures with java.net.SocketTimeoutException: Read timed out.",
+            "source": "observability",
+            "reportDerived": false
+        },
+        {
+            "id": "E8",
+            "type": "metric",
+            "statement": "connection_pool_active reached 5 out of 5 at 09:05 and stayed at 5 out of 5 through 09:15.",
+            "source": "observability",
+            "reportDerived": false
+        },
+        {
+            "id": "E9",
+            "type": "metric",
+            "statement": "connection_acquire_wait_ms_p95 rose from 6 ms at 09:03 to 9800 ms at 09:05, 14800 ms at 09:07, and 15200 ms at 09:10.",
+            "source": "observability",
+            "reportDerived": false
+        },
+        {
+            "id": "E10",
+            "type": "metric",
+            "statement": "bank_gateway_p95_latency_ms remained between 116 ms and 122 ms from 09:00 through 09:15.",
+            "source": "observability",
+            "reportDerived": false
+        }
+    ],
+    "hypotheses": [
+        {
+            "id": "H4",
+            "statement": "v3.2.0 introduced a client-side bank-gateway HTTP connection-pool regression, and payment-service then exhausted its own pool, queued waiting for connections, and surfaced local SocketTimeoutException failures in BankGatewayClient even though bank-gateway itself stayed healthy. This explains the immediate post-deploy error spike, pool saturation, long connection-acquire waits, and normal downstream latency without claiming a specific unproven sub-mechanism such as a pool-size reduction.",
+            "confidence": 0.89,
+            "supportingEvidenceIds": [
+                "E1",
+                "E2",
+                "E4",
+                "E5",
+                "E6",
+                "E7",
+                "E8",
+                "E9",
+                "E10"
+            ],
+            "supportingCitationIds": [
+                "C1",
+                "C2"
+            ]
+        },
+        {
+            "id": "H5",
+            "statement": "Instead of a simple pool-size change, the v3.2.0 HTTP-client tuning may have changed connection lifecycle behavior in payment-service—such as poorer connection reuse or longer-held connections—so the pool became effectively saturated at 5/5 and requests timed out locally while waiting for or using pooled connections. This fits the same reported BankGatewayClient read-timeout symptom and the healthy downstream metrics, but attributes the exhaustion to connection-handling behavior rather than explicit capacity reduction.",
+            "confidence": 0.56,
+            "supportingEvidenceIds": [
+                "E1",
+                "E2",
+                "E4",
+                "E5",
+                "E7",
+                "E8",
+                "E9",
+                "E10"
+            ],
+            "supportingCitationIds": [
+                "C1",
+                "C2"
+            ]
+        }
+    ],
+    "critiques": [
+        {
+            "hypothesisId": "H4",
+            "status": "SUPPORTED",
+            "reasons": [
+                "E5 shows a payment-service deploy with an 'http-client configuration update (connection pool tuning)' at 09:04:58, and E6 shows the error spike beginning immediately after that deploy; this directly corroborates the hypothesis's post-deploy client-side regression timing.",
+                "E8 and E9 specifically support client-side pool exhaustion: the pool is pinned at 5/5 from 09:05 through 09:15 and connection_acquire_wait_ms_p95 jumps from 6 ms to 9800-15200 ms. C1 says a pool pinned at max with long acquire waits means requests are queueing on your side.",
+                "E10 directly contradicts blaming bank-gateway itself: bank_gateway_p95_latency_ms stays normal at 116-122 ms throughout the incident window. C1 and C2 both state that normal downstream latency with timeout spikes points away from downstream failure and toward local connection-pool exhaustion.",
+                "E7 provides observability corroboration for the reported symptom in E1/E4 by showing actual PaymentService logs with java.net.SocketTimeoutException: Read timed out during the incident, consistent with C1/C2's described symptom when a healthy downstream is masked by local pool exhaustion.",
+                "The hypothesis does not overclaim an unproven sub-mechanism such as pool-size reduction; that restraint matches the evidence. E5 only proves an HTTP-client config update, while E8-E10 prove the exhaustion pattern. This is better supported than narrower alternatives that require a specific internal cause not shown in evidence.",
+                "Its cited support is real: unlike incident-report-only claims E1/E2/E4, the key mechanism is independently corroborated by observability data E5-E10 and matches C1/C2."
+            ]
+        },
+        {
+            "hypothesisId": "H5",
+            "status": "WEAK",
+            "reasons": [
+                "E5, E8, E9, and E10 do support a generic client-side connection-pool exhaustion pattern after the v3.2.0 tuning deploy, but they do not specifically show 'poorer connection reuse' or 'longer-held connections'; those are unverified sub-mechanisms.",
+                "C1 and C2 support pool exhaustion generally, but neither citation positively supports this hypothesis's specific attribution to changed connection lifecycle behavior over other causes such as an explicit pool-size reduction or another pool-config regression.",
+                "E8 shows the pool saturated at 5/5, but that fact does not discriminate between lifecycle-behavior problems and a simple capacity reduction; by the discriminator rule, evidence equally consistent with competing pool-regression theories does not specifically support H5.",
+                "E1/E2/E4 are incident-report symptoms and E7/E10 corroborate local timeouts plus a healthy downstream, but those facts support H4's broader explanation just as well as H5's narrower one. H5 therefore lacks hypothesis-specific corroboration.",
+                "The hypothesis's claimed support from C2 is overstated: C2's concrete historical example is a reduced pool size after 'tuning,' which is a competing explanation rather than evidence for lifecycle-behavior changes."
+            ]
+        }
+    ],
+    "decision": {
+        "type": "RECOMMEND_REMEDIATION",
+        "selectedHypothesisId": "H4",
+        "rationale": "H4 is the highest-ranked hypothesis by the required priority order because the Critic marked it SUPPORTED, while H5 is only WEAK. H4 also has the best evidence coverage: it explains the reported symptom in E1/E4 and the stack location in E2, and it is independently grounded by observability in E5-E10. Specifically, E5 shows v3.2.0 deployed an 'http-client configuration update (connection pool tuning)' immediately before the incident, E6 shows the error rate rising right after that deploy, E8 shows the client connection pool pinned at 5/5, E9 shows connection acquisition wait exploding to 9800-15200 ms, E7 shows real payment-service SocketTimeoutException failures during the incident, and E10 shows bank-gateway latency staying normal, which argues against a downstream bank-gateway slowdown. The citation support also matches H4 better than H5: C1 and C2 support client-side connection-pool exhaustion with healthy downstream latency, while H5 depends on a narrower sub-mechanism not specifically evidenced. Evidence quality is sufficient because the core mechanism is supported by observability data E5-E10, not only by the incident report.",
+        "proposedFix": "Proposal only, pending human approval: roll back or revise the v3.2.0 HTTP-client connection-pool tuning in payment-service, restoring previously known-good pool behavior and validating that the client is no longer saturating at 5/5 under normal load. As part of the approved change, review the effective pool configuration introduced in v3.2.0, ensure connection acquisition does not wait near request timeout thresholds, and add a deployment check that monitors pool saturation, connection_acquire_wait_ms_p95, and payment timeout rate immediately after release.",
+        "postmortem": "A payment-service regression was introduced with deploy v3.2.0 (E5), after which error rate increased sharply (E6). During the incident, payment-service logged SocketTimeoutException read timeouts (E7) matching the reported symptom (E1, E4), while its HTTP connection pool remained saturated at 5/5 (E8) and connection acquisition waits rose to 9.8-15.2 seconds (E9). At the same time, bank-gateway latency stayed normal at 116-122 ms (E10), indicating the failures were most consistent with client-side pool exhaustion rather than downstream slowness. This aligns with runbook-connection-pool-exhaustion.md and postmortem-2025-09-payment-pool.md, which describe timeout spikes with healthy downstream latency as a signature of local connection-pool exhaustion."
+    },
+    "trace": [
+        {
+            "seq": 1,
+            "type": "INCIDENT_RECEIVED",
+            "agent": "Orchestrator",
+            "summary": "Incident received for payment-service",
+            "payload": {
+                "service": "payment-service",
+                "stackTraceChars": 260,
+                "logChars": 2233,
+                "metricChars": 1486,
+                "timestamp": "2026-06-13T06:26:17.475314400Z"
+            }
+        },
+        {
+            "seq": 2,
+            "type": "REDACTION",
+            "agent": "Orchestrator",
+            "summary": "Secret redaction applied at the boundary (before any model sees the input)",
+            "payload": {
+                "stackTraceChanged": false,
+                "logsChanged": true,
+                "metricsChanged": false
+            }
+        },
+        {
+            "seq": 3,
+            "type": "AGENT_HANDOFF",
+            "agent": "Orchestrator",
+            "summary": "Orchestrator -> TriageAgent",
+            "payload": {
+                "agent": "TriageAgent"
+            }
+        },
+        {
+            "seq": 4,
+            "type": "EVIDENCE_EXTRACTED",
+            "agent": "TriageAgent",
+            "summary": "Extracted 10 evidence items (4 from the incident report)",
+            "payload": {
+                "count": 10,
+                "reportDerivedCount": 4,
+                "evidence": [
+                    {
+                        "id": "E1",
+                        "type": "log",
+                        "statement": "A java.net.SocketTimeoutException with message \"Read timed out\" is shown in the report.",
+                        "source": "incident_report",
+                        "reportDerived": true
+                    },
+                    {
+                        "id": "E2",
+                        "type": "code",
+                        "statement": "The stack trace includes com.shop.payment.BankGatewayClient.charge at BankGatewayClient.java:31.",
+                        "source": "incident_report",
+                        "reportDerived": true
+                    },
+                    {
+                        "id": "E3",
+                        "type": "code",
+                        "statement": "The stack trace includes com.shop.payment.PaymentService.process at PaymentService.java:54.",
+                        "source": "incident_report",
+                        "reportDerived": true
+                    },
+                    {
+                        "id": "E4",
+                        "type": "symptom",
+                        "statement": "The report states that payments to bank-gateway are timing out.",
+                        "source": "incident_report",
+                        "reportDerived": true
+                    },
+                    {
+                        "id": "E5",
+                        "type": "timeline",
+                        "statement": "At 2026-06-08T09:04:58.110Z, payment-service applied deploy v3.2.0 with an \"http-client configuration update (connection pool tuning)\".",
+                        "source": "observability",
+                        "reportDerived": false
+                    },
+                    {
+                        "id": "E6",
+                        "type": "metric",
+                        "statement": "payment-service error_rate_percent increased from 0.2% at 09:03 to 6.4% at 09:05 and 21.3% at 09:07.",
+                        "source": "observability",
+                        "reportDerived": false
+                    },
+                    {
+                        "id": "E7",
+                        "type": "log",
+                        "statement": "At 2026-06-08T09:05:36.511Z, 2026-06-08T09:05:56.834Z, and 2026-06-08T09:06:31.118Z, PaymentService logged payment failures with java.net.SocketTimeoutException: Read timed out.",
+                        "source": "observability",
+                        "reportDerived": false
+                    },
+                    {
+                        "id": "E8",
+                        "type": "metric",
+                        "statement": "connection_pool_active reached 5 out of 5 at 09:05 and stayed at 5 out of 5 through 09:15.",
+                        "source": "observability",
+                        "reportDerived": false
+                    },
+                    {
+                        "id": "E9",
+                        "type": "metric",
+                        "statement": "connection_acquire_wait_ms_p95 rose from 6 ms at 09:03 to 9800 ms at 09:05, 14800 ms at 09:07, and 15200 ms at 09:10.",
+                        "source": "observability",
+                        "reportDerived": false
+                    },
+                    {
+                        "id": "E10",
+                        "type": "metric",
+                        "statement": "bank_gateway_p95_latency_ms remained between 116 ms and 122 ms from 09:00 through 09:15.",
+                        "source": "observability",
+                        "reportDerived": false
+                    }
+                ]
+            }
+        },
+        {
+            "seq": 5,
+            "type": "AGENT_HANDOFF",
+            "agent": "Orchestrator",
+            "summary": "Orchestrator -> KnowledgeAgent",
+            "payload": {
+                "agent": "KnowledgeAgent"
+            }
+        },
+        {
+            "seq": 6,
+            "type": "IQ_QUERY",
+            "agent": "KnowledgeAgent",
+            "summary": "Searching knowledge base: \"payment-service bank-gateway SocketTimeoutException Read timed out after deploy http-client configuration update connection pool tuning connection pool exhausted active 5/5 acquire wait high downstream latency normal\"",
+            "payload": {
+                "query": "payment-service bank-gateway SocketTimeoutException Read timed out after deploy http-client configuration update connection pool tuning connection pool exhausted active 5/5 acquire wait high downstream latency normal"
+            }
+        },
+        {
+            "seq": 7,
+            "type": "CITATIONS_RETRIEVED",
+            "agent": "KnowledgeAgent",
+            "summary": "Retrieved 3 cited snippets",
+            "payload": {
+                "count": 3,
+                "citationIds": [
+                    "C1",
+                    "C2",
+                    "C3"
+                ],
+                "sourceNames": [
+                    "runbook-connection-pool-exhaustion.md",
+                    "postmortem-2025-09-payment-pool.md",
+                    "runbook-null-pointer.md"
+                ]
+            }
+        },
+        {
+            "seq": 8,
+            "type": "AGENT_HANDOFF",
+            "agent": "Orchestrator",
+            "summary": "Orchestrator -> RootCauseAgent",
+            "payload": {
+                "agent": "RootCauseAgent"
+            }
+        },
+        {
+            "seq": 9,
+            "type": "HYPOTHESES_PROPOSED",
+            "agent": "RootCauseAgent",
+            "summary": "Proposed 3 competing hypotheses",
+            "payload": {
+                "count": 3,
+                "hypotheses": [
+                    {
+                        "id": "H1",
+                        "statement": "Deploy v3.2.0 likely reduced the bank-gateway HTTP client pool capacity to 5 (or otherwise mis-set the pool size), causing immediate client-side connection pool exhaustion. Requests then queued in payment-service and timed out locally in BankGatewayClient even though bank-gateway itself remained healthy.",
+                        "confidence": 0.94,
+                        "supportingEvidenceIds": [
+                            "E1",
+                            "E2",
+                            "E4",
+                            "E5",
+                            "E6",
+                            "E8",
+                            "E9",
+                            "E10"
+                        ],
+                        "supportingCitationIds": [
+                            "C1",
+                            "C2"
+                        ]
+                    },
+                    {
+                        "id": "H2",
+                        "statement": "Deploy v3.2.0 may have introduced a connection leak or failure to return bank-gateway connections to the pool, pinning the pool at 5/5 active and causing long acquire waits that surfaced as SocketTimeoutException during payment processing. This would explain why timeouts started right after the http-client configuration update while downstream latency stayed normal.",
+                        "confidence": 0.78,
+                        "supportingEvidenceIds": [
+                            "E1",
+                            "E2",
+                            "E3",
+                            "E4",
+                            "E5",
+                            "E7",
+                            "E8",
+                            "E9",
+                            "E10"
+                        ],
+                        "supportingCitationIds": [
+                            "C1"
+                        ]
+                    },
+                    {
+                        "id": "H3",
+                        "statement": "The http-client configuration update in v3.2.0 likely introduced an overly aggressive client-side timeout behavior while requests were waiting on an exhausted pool, so payment-service timed out before a connection/request could complete. In this scenario the reported bank-gateway timeout is a local client-side failure mode, not a downstream slowdown.",
+                        "confidence": 0.56,
+                        "supportingEvidenceIds": [
+                            "E1",
+                            "E2",
+                            "E4",
+                            "E5",
+                            "E6",
+                            "E8",
+                            "E9",
+                            "E10"
+                        ],
+                        "supportingCitationIds": [
+                            "C1",
+                            "C2"
+                        ]
+                    }
+                ],
+                "afterRetry": 0
+            }
+        },
+        {
+            "seq": 10,
+            "type": "AGENT_HANDOFF",
+            "agent": "Orchestrator",
+            "summary": "Orchestrator -> CriticAgent",
+            "payload": {
+                "agent": "CriticAgent"
+            }
+        },
+        {
+            "seq": 11,
+            "type": "CRITIQUE",
+            "agent": "CriticAgent",
+            "summary": "Critiqued 3 hypotheses: H1=WEAK, H2=WEAK, H3=WEAK",
+            "payload": {
+                "critiques": [
+                    {
+                        "hypothesisId": "H1",
+                        "status": "WEAK",
+                        "reasons": [
+                            "E5 shows a deploy with an 'http-client configuration update (connection pool tuning)' immediately before the spike, and E8/E9/E10 match the client-side pool-exhaustion pattern described in C1/C2 (pool pinned at max, long acquire waits, downstream latency normal), so the general mechanism is plausible.",
+                            "But H1 specifically claims the deploy 'reduced the ... pool capacity to 5 (or otherwise mis-set the pool size)'. No evidence item shows the configured pool size before/after the deploy or that v3.2.0 set the limit to 5; E8 only shows observed active connections reaching 5/5, which is also consistent with alternatives like a leak. That makes the claimed support from E8 non-discriminating under the discriminator rule.",
+                            "E1/E2/E4 support only the reported symptom of read timeouts in BankGatewayClient, not the specific cause 'reduced pool capacity to 5'; C1/C2 are pattern knowledge, not incident-specific proof of a pool-size reduction.",
+                            "H1's supportingEvidenceIds omit E7, which is the direct observability log corroborating the same SocketTimeoutException seen in the incident report; as written, much of its claimed support comes from the incident report itself (E1/E2/E4), so the incident-specific corroboration for the exact root cause remains thin."
+                        ]
+                    },
+                    {
+                        "hypothesisId": "H2",
+                        "status": "WEAK",
+                        "reasons": [
+                            "E5, E7, E8, E9, and E10 together fit a client-side pool problem after the deploy: the timeout logs begin after the http-client config update, the pool is pinned at 5/5, acquire waits become very large, and downstream latency stays normal, which is consistent with C1.",
+                            "However, H2 specifically alleges a 'connection leak or failure to return ... connections to the pool'. No evidence item shows leaked connections, missing returns, monotonically growing checked-out connections, or code changes affecting connection release. E8/E9 indicate saturation, not leak specifically.",
+                            "E5 says the deploy was an 'http-client configuration update (connection pool tuning)', which points more directly to a configuration change than to a leak; while this does not disprove H2, it means the cited support is not specific to a leak mechanism.",
+                            "E1/E2/E3/E4/E7 explain the reported symptom and stack location, but per C1/C2 those facts are equally consistent with several client-side causes of pool exhaustion and do not discriminate leak vs mis-sized pool vs other client misconfiguration."
+                        ]
+                    },
+                    {
+                        "hypothesisId": "H3",
+                        "status": "WEAK",
+                        "reasons": [
+                            "E5, E8, E9, and E10 support only the broad idea that the failure was client-side rather than a downstream slowdown: after the deploy, the pool saturates, acquire wait jumps sharply, and bank-gateway latency remains normal, matching C1/C2.",
+                            "But H3 specifically claims the update 'introduced an overly aggressive client-side timeout behavior'. No evidence item reports timeout configuration values, a timeout-setting change, or requests timing out at a newly shortened threshold. E5 mentions only a generic 'http-client configuration update (connection pool tuning)'.",
+                            "C1/C2 describe local timeouts caused by waiting on an exhausted pool even without any timeout misconfiguration; they do not specifically support the added assertion that timeout behavior itself was changed. So the citations back the local-failure framing, not H3's distinctive mechanism.",
+                            "E1/E2/E4/E6 show read-timeout symptoms and rising errors, but those observations are equally explained by H1 and H2. Under the discriminator rule, they do not specifically support an 'overly aggressive timeout' theory over other client-side pool-exhaustion explanations."
+                        ]
+                    }
+                ],
+                "supportedCount": 0
+            }
+        },
+        {
+            "seq": 12,
+            "type": "HYPOTHESIS_DISCARDED",
+            "agent": "CriticAgent",
+            "summary": "Discarded H1 (WEAK) at retry 1/2 — E5 shows a deploy with an 'http-client configuration update (connection pool tuning)' immediately before the spike, and E8/E9/E10 match the client-side pool-exhaustion pattern described in C1/C2 (pool pinned at max, long acquire waits, downstream latency normal), so the general mechanism is plausible.",
+            "payload": {
+                "retryNumber": 1,
+                "maxRetries": 2,
+                "discarded": {
+                    "hypothesis": {
+                        "id": "H1",
+                        "statement": "Deploy v3.2.0 likely reduced the bank-gateway HTTP client pool capacity to 5 (or otherwise mis-set the pool size), causing immediate client-side connection pool exhaustion. Requests then queued in payment-service and timed out locally in BankGatewayClient even though bank-gateway itself remained healthy.",
+                        "confidence": 0.94,
+                        "supportingEvidenceIds": [
+                            "E1",
+                            "E2",
+                            "E4",
+                            "E5",
+                            "E6",
+                            "E8",
+                            "E9",
+                            "E10"
+                        ],
+                        "supportingCitationIds": [
+                            "C1",
+                            "C2"
+                        ]
+                    },
+                    "status": "WEAK",
+                    "reasons": [
+                        "E5 shows a deploy with an 'http-client configuration update (connection pool tuning)' immediately before the spike, and E8/E9/E10 match the client-side pool-exhaustion pattern described in C1/C2 (pool pinned at max, long acquire waits, downstream latency normal), so the general mechanism is plausible.",
+                        "But H1 specifically claims the deploy 'reduced the ... pool capacity to 5 (or otherwise mis-set the pool size)'. No evidence item shows the configured pool size before/after the deploy or that v3.2.0 set the limit to 5; E8 only shows observed active connections reaching 5/5, which is also consistent with alternatives like a leak. That makes the claimed support from E8 non-discriminating under the discriminator rule.",
+                        "E1/E2/E4 support only the reported symptom of read timeouts in BankGatewayClient, not the specific cause 'reduced pool capacity to 5'; C1/C2 are pattern knowledge, not incident-specific proof of a pool-size reduction.",
+                        "H1's supportingEvidenceIds omit E7, which is the direct observability log corroborating the same SocketTimeoutException seen in the incident report; as written, much of its claimed support comes from the incident report itself (E1/E2/E4), so the incident-specific corroboration for the exact root cause remains thin."
+                    ]
+                }
+            }
+        },
+        {
+            "seq": 13,
+            "type": "HYPOTHESIS_DISCARDED",
+            "agent": "CriticAgent",
+            "summary": "Discarded H2 (WEAK) at retry 1/2 — E5, E7, E8, E9, and E10 together fit a client-side pool problem after the deploy: the timeout logs begin after the http-client config update, the pool is pinned at 5/5, acquire waits become very large, and downstream latency stays normal, which is consistent with C1.",
+            "payload": {
+                "retryNumber": 1,
+                "maxRetries": 2,
+                "discarded": {
+                    "hypothesis": {
+                        "id": "H2",
+                        "statement": "Deploy v3.2.0 may have introduced a connection leak or failure to return bank-gateway connections to the pool, pinning the pool at 5/5 active and causing long acquire waits that surfaced as SocketTimeoutException during payment processing. This would explain why timeouts started right after the http-client configuration update while downstream latency stayed normal.",
+                        "confidence": 0.78,
+                        "supportingEvidenceIds": [
+                            "E1",
+                            "E2",
+                            "E3",
+                            "E4",
+                            "E5",
+                            "E7",
+                            "E8",
+                            "E9",
+                            "E10"
+                        ],
+                        "supportingCitationIds": [
+                            "C1"
+                        ]
+                    },
+                    "status": "WEAK",
+                    "reasons": [
+                        "E5, E7, E8, E9, and E10 together fit a client-side pool problem after the deploy: the timeout logs begin after the http-client config update, the pool is pinned at 5/5, acquire waits become very large, and downstream latency stays normal, which is consistent with C1.",
+                        "However, H2 specifically alleges a 'connection leak or failure to return ... connections to the pool'. No evidence item shows leaked connections, missing returns, monotonically growing checked-out connections, or code changes affecting connection release. E8/E9 indicate saturation, not leak specifically.",
+                        "E5 says the deploy was an 'http-client configuration update (connection pool tuning)', which points more directly to a configuration change than to a leak; while this does not disprove H2, it means the cited support is not specific to a leak mechanism.",
+                        "E1/E2/E3/E4/E7 explain the reported symptom and stack location, but per C1/C2 those facts are equally consistent with several client-side causes of pool exhaustion and do not discriminate leak vs mis-sized pool vs other client misconfiguration."
+                    ]
+                }
+            }
+        },
+        {
+            "seq": 14,
+            "type": "HYPOTHESIS_DISCARDED",
+            "agent": "CriticAgent",
+            "summary": "Discarded H3 (WEAK) at retry 1/2 — E5, E8, E9, and E10 support only the broad idea that the failure was client-side rather than a downstream slowdown: after the deploy, the pool saturates, acquire wait jumps sharply, and bank-gateway latency remains normal, matching C1/C2.",
+            "payload": {
+                "retryNumber": 1,
+                "maxRetries": 2,
+                "discarded": {
+                    "hypothesis": {
+                        "id": "H3",
+                        "statement": "The http-client configuration update in v3.2.0 likely introduced an overly aggressive client-side timeout behavior while requests were waiting on an exhausted pool, so payment-service timed out before a connection/request could complete. In this scenario the reported bank-gateway timeout is a local client-side failure mode, not a downstream slowdown.",
+                        "confidence": 0.56,
+                        "supportingEvidenceIds": [
+                            "E1",
+                            "E2",
+                            "E4",
+                            "E5",
+                            "E6",
+                            "E8",
+                            "E9",
+                            "E10"
+                        ],
+                        "supportingCitationIds": [
+                            "C1",
+                            "C2"
+                        ]
+                    },
+                    "status": "WEAK",
+                    "reasons": [
+                        "E5, E8, E9, and E10 support only the broad idea that the failure was client-side rather than a downstream slowdown: after the deploy, the pool saturates, acquire wait jumps sharply, and bank-gateway latency remains normal, matching C1/C2.",
+                        "But H3 specifically claims the update 'introduced an overly aggressive client-side timeout behavior'. No evidence item reports timeout configuration values, a timeout-setting change, or requests timing out at a newly shortened threshold. E5 mentions only a generic 'http-client configuration update (connection pool tuning)'.",
+                        "C1/C2 describe local timeouts caused by waiting on an exhausted pool even without any timeout misconfiguration; they do not specifically support the added assertion that timeout behavior itself was changed. So the citations back the local-failure framing, not H3's distinctive mechanism.",
+                        "E1/E2/E4/E6 show read-timeout symptoms and rising errors, but those observations are equally explained by H1 and H2. Under the discriminator rule, they do not specifically support an 'overly aggressive timeout' theory over other client-side pool-exhaustion explanations."
+                    ]
+                }
+            }
+        },
+        {
+            "seq": 15,
+            "type": "RETRY_TRIGGERED",
+            "agent": "Orchestrator",
+            "summary": "Retry 1/2 — no SUPPORTED hypothesis; sending 3 back to RootCauseAgent for re-thinking",
+            "payload": {
+                "retryNumber": 1,
+                "maxRetries": 2,
+                "rejectedHypotheses": [
+                    {
+                        "hypothesis": {
+                            "id": "H1",
+                            "statement": "Deploy v3.2.0 likely reduced the bank-gateway HTTP client pool capacity to 5 (or otherwise mis-set the pool size), causing immediate client-side connection pool exhaustion. Requests then queued in payment-service and timed out locally in BankGatewayClient even though bank-gateway itself remained healthy.",
+                            "confidence": 0.94,
+                            "supportingEvidenceIds": [
+                                "E1",
+                                "E2",
+                                "E4",
+                                "E5",
+                                "E6",
+                                "E8",
+                                "E9",
+                                "E10"
+                            ],
+                            "supportingCitationIds": [
+                                "C1",
+                                "C2"
+                            ]
+                        },
+                        "status": "WEAK",
+                        "reasons": [
+                            "E5 shows a deploy with an 'http-client configuration update (connection pool tuning)' immediately before the spike, and E8/E9/E10 match the client-side pool-exhaustion pattern described in C1/C2 (pool pinned at max, long acquire waits, downstream latency normal), so the general mechanism is plausible.",
+                            "But H1 specifically claims the deploy 'reduced the ... pool capacity to 5 (or otherwise mis-set the pool size)'. No evidence item shows the configured pool size before/after the deploy or that v3.2.0 set the limit to 5; E8 only shows observed active connections reaching 5/5, which is also consistent with alternatives like a leak. That makes the claimed support from E8 non-discriminating under the discriminator rule.",
+                            "E1/E2/E4 support only the reported symptom of read timeouts in BankGatewayClient, not the specific cause 'reduced pool capacity to 5'; C1/C2 are pattern knowledge, not incident-specific proof of a pool-size reduction.",
+                            "H1's supportingEvidenceIds omit E7, which is the direct observability log corroborating the same SocketTimeoutException seen in the incident report; as written, much of its claimed support comes from the incident report itself (E1/E2/E4), so the incident-specific corroboration for the exact root cause remains thin."
+                        ]
+                    },
+                    {
+                        "hypothesis": {
+                            "id": "H2",
+                            "statement": "Deploy v3.2.0 may have introduced a connection leak or failure to return bank-gateway connections to the pool, pinning the pool at 5/5 active and causing long acquire waits that surfaced as SocketTimeoutException during payment processing. This would explain why timeouts started right after the http-client configuration update while downstream latency stayed normal.",
+                            "confidence": 0.78,
+                            "supportingEvidenceIds": [
+                                "E1",
+                                "E2",
+                                "E3",
+                                "E4",
+                                "E5",
+                                "E7",
+                                "E8",
+                                "E9",
+                                "E10"
+                            ],
+                            "supportingCitationIds": [
+                                "C1"
+                            ]
+                        },
+                        "status": "WEAK",
+                        "reasons": [
+                            "E5, E7, E8, E9, and E10 together fit a client-side pool problem after the deploy: the timeout logs begin after the http-client config update, the pool is pinned at 5/5, acquire waits become very large, and downstream latency stays normal, which is consistent with C1.",
+                            "However, H2 specifically alleges a 'connection leak or failure to return ... connections to the pool'. No evidence item shows leaked connections, missing returns, monotonically growing checked-out connections, or code changes affecting connection release. E8/E9 indicate saturation, not leak specifically.",
+                            "E5 says the deploy was an 'http-client configuration update (connection pool tuning)', which points more directly to a configuration change than to a leak; while this does not disprove H2, it means the cited support is not specific to a leak mechanism.",
+                            "E1/E2/E3/E4/E7 explain the reported symptom and stack location, but per C1/C2 those facts are equally consistent with several client-side causes of pool exhaustion and do not discriminate leak vs mis-sized pool vs other client misconfiguration."
+                        ]
+                    },
+                    {
+                        "hypothesis": {
+                            "id": "H3",
+                            "statement": "The http-client configuration update in v3.2.0 likely introduced an overly aggressive client-side timeout behavior while requests were waiting on an exhausted pool, so payment-service timed out before a connection/request could complete. In this scenario the reported bank-gateway timeout is a local client-side failure mode, not a downstream slowdown.",
+                            "confidence": 0.56,
+                            "supportingEvidenceIds": [
+                                "E1",
+                                "E2",
+                                "E4",
+                                "E5",
+                                "E6",
+                                "E8",
+                                "E9",
+                                "E10"
+                            ],
+                            "supportingCitationIds": [
+                                "C1",
+                                "C2"
+                            ]
+                        },
+                        "status": "WEAK",
+                        "reasons": [
+                            "E5, E8, E9, and E10 support only the broad idea that the failure was client-side rather than a downstream slowdown: after the deploy, the pool saturates, acquire wait jumps sharply, and bank-gateway latency remains normal, matching C1/C2.",
+                            "But H3 specifically claims the update 'introduced an overly aggressive client-side timeout behavior'. No evidence item reports timeout configuration values, a timeout-setting change, or requests timing out at a newly shortened threshold. E5 mentions only a generic 'http-client configuration update (connection pool tuning)'.",
+                            "C1/C2 describe local timeouts caused by waiting on an exhausted pool even without any timeout misconfiguration; they do not specifically support the added assertion that timeout behavior itself was changed. So the citations back the local-failure framing, not H3's distinctive mechanism.",
+                            "E1/E2/E4/E6 show read-timeout symptoms and rising errors, but those observations are equally explained by H1 and H2. Under the discriminator rule, they do not specifically support an 'overly aggressive timeout' theory over other client-side pool-exhaustion explanations."
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "seq": 16,
+            "type": "AGENT_HANDOFF",
+            "agent": "Orchestrator",
+            "summary": "Orchestrator -> RootCauseAgent",
+            "payload": {
+                "agent": "RootCauseAgent"
+            }
+        },
+        {
+            "seq": 17,
+            "type": "HYPOTHESES_PROPOSED",
+            "agent": "RootCauseAgent",
+            "summary": "Proposed 2 competing hypotheses (re-think after rejection)",
+            "payload": {
+                "count": 2,
+                "hypotheses": [
+                    {
+                        "id": "H4",
+                        "statement": "v3.2.0 introduced a client-side bank-gateway HTTP connection-pool regression, and payment-service then exhausted its own pool, queued waiting for connections, and surfaced local SocketTimeoutException failures in BankGatewayClient even though bank-gateway itself stayed healthy. This explains the immediate post-deploy error spike, pool saturation, long connection-acquire waits, and normal downstream latency without claiming a specific unproven sub-mechanism such as a pool-size reduction.",
+                        "confidence": 0.89,
+                        "supportingEvidenceIds": [
+                            "E1",
+                            "E2",
+                            "E4",
+                            "E5",
+                            "E6",
+                            "E7",
+                            "E8",
+                            "E9",
+                            "E10"
+                        ],
+                        "supportingCitationIds": [
+                            "C1",
+                            "C2"
+                        ]
+                    },
+                    {
+                        "id": "H5",
+                        "statement": "Instead of a simple pool-size change, the v3.2.0 HTTP-client tuning may have changed connection lifecycle behavior in payment-service—such as poorer connection reuse or longer-held connections—so the pool became effectively saturated at 5/5 and requests timed out locally while waiting for or using pooled connections. This fits the same reported BankGatewayClient read-timeout symptom and the healthy downstream metrics, but attributes the exhaustion to connection-handling behavior rather than explicit capacity reduction.",
+                        "confidence": 0.56,
+                        "supportingEvidenceIds": [
+                            "E1",
+                            "E2",
+                            "E4",
+                            "E5",
+                            "E7",
+                            "E8",
+                            "E9",
+                            "E10"
+                        ],
+                        "supportingCitationIds": [
+                            "C1",
+                            "C2"
+                        ]
+                    }
+                ],
+                "afterRetry": 1
+            }
+        },
+        {
+            "seq": 18,
+            "type": "AGENT_HANDOFF",
+            "agent": "Orchestrator",
+            "summary": "Orchestrator -> CriticAgent",
+            "payload": {
+                "agent": "CriticAgent"
+            }
+        },
+        {
+            "seq": 19,
+            "type": "CRITIQUE",
+            "agent": "CriticAgent",
+            "summary": "Critiqued 2 hypotheses: H4=SUPPORTED, H5=WEAK",
+            "payload": {
+                "critiques": [
+                    {
+                        "hypothesisId": "H4",
+                        "status": "SUPPORTED",
+                        "reasons": [
+                            "E5 shows a payment-service deploy with an 'http-client configuration update (connection pool tuning)' at 09:04:58, and E6 shows the error spike beginning immediately after that deploy; this directly corroborates the hypothesis's post-deploy client-side regression timing.",
+                            "E8 and E9 specifically support client-side pool exhaustion: the pool is pinned at 5/5 from 09:05 through 09:15 and connection_acquire_wait_ms_p95 jumps from 6 ms to 9800-15200 ms. C1 says a pool pinned at max with long acquire waits means requests are queueing on your side.",
+                            "E10 directly contradicts blaming bank-gateway itself: bank_gateway_p95_latency_ms stays normal at 116-122 ms throughout the incident window. C1 and C2 both state that normal downstream latency with timeout spikes points away from downstream failure and toward local connection-pool exhaustion.",
+                            "E7 provides observability corroboration for the reported symptom in E1/E4 by showing actual PaymentService logs with java.net.SocketTimeoutException: Read timed out during the incident, consistent with C1/C2's described symptom when a healthy downstream is masked by local pool exhaustion.",
+                            "The hypothesis does not overclaim an unproven sub-mechanism such as pool-size reduction; that restraint matches the evidence. E5 only proves an HTTP-client config update, while E8-E10 prove the exhaustion pattern. This is better supported than narrower alternatives that require a specific internal cause not shown in evidence.",
+                            "Its cited support is real: unlike incident-report-only claims E1/E2/E4, the key mechanism is independently corroborated by observability data E5-E10 and matches C1/C2."
+                        ]
+                    },
+                    {
+                        "hypothesisId": "H5",
+                        "status": "WEAK",
+                        "reasons": [
+                            "E5, E8, E9, and E10 do support a generic client-side connection-pool exhaustion pattern after the v3.2.0 tuning deploy, but they do not specifically show 'poorer connection reuse' or 'longer-held connections'; those are unverified sub-mechanisms.",
+                            "C1 and C2 support pool exhaustion generally, but neither citation positively supports this hypothesis's specific attribution to changed connection lifecycle behavior over other causes such as an explicit pool-size reduction or another pool-config regression.",
+                            "E8 shows the pool saturated at 5/5, but that fact does not discriminate between lifecycle-behavior problems and a simple capacity reduction; by the discriminator rule, evidence equally consistent with competing pool-regression theories does not specifically support H5.",
+                            "E1/E2/E4 are incident-report symptoms and E7/E10 corroborate local timeouts plus a healthy downstream, but those facts support H4's broader explanation just as well as H5's narrower one. H5 therefore lacks hypothesis-specific corroboration.",
+                            "The hypothesis's claimed support from C2 is overstated: C2's concrete historical example is a reduced pool size after 'tuning,' which is a competing explanation rather than evidence for lifecycle-behavior changes."
+                        ]
+                    }
+                ],
+                "supportedCount": 1
+            }
+        },
+        {
+            "seq": 20,
+            "type": "AGENT_HANDOFF",
+            "agent": "Orchestrator",
+            "summary": "Orchestrator -> JudgeAgent",
+            "payload": {
+                "agent": "JudgeAgent"
+            }
+        },
+        {
+            "seq": 21,
+            "type": "DECISION",
+            "agent": "JudgeAgent",
+            "summary": "Decision: RECOMMEND_REMEDIATION (selected H4)",
+            "payload": {
+                "type": "RECOMMEND_REMEDIATION",
+                "selectedHypothesisId": "H4",
+                "rationale": "H4 is the highest-ranked hypothesis by the required priority order because the Critic marked it SUPPORTED, while H5 is only WEAK. H4 also has the best evidence coverage: it explains the reported symptom in E1/E4 and the stack location in E2, and it is independently grounded by observability in E5-E10. Specifically, E5 shows v3.2.0 deployed an 'http-client configuration update (connection pool tuning)' immediately before the incident, E6 shows the error rate rising right after that deploy, E8 shows the client connection pool pinned at 5/5, E9 shows connection acquisition wait exploding to 9800-15200 ms, E7 shows real payment-service SocketTimeoutException failures during the incident, and E10 shows bank-gateway latency staying normal, which argues against a downstream bank-gateway slowdown. The citation support also matches H4 better than H5: C1 and C2 support client-side connection-pool exhaustion with healthy downstream latency, while H5 depends on a narrower sub-mechanism not specifically evidenced. Evidence quality is sufficient because the core mechanism is supported by observability data E5-E10, not only by the incident report.",
+                "retryCount": 1
+            }
+        },
+        {
+            "seq": 22,
+            "type": "FIX_DRAFTED",
+            "agent": "JudgeAgent",
+            "summary": "Drafted a proposed fix for H4 (draft only, not applied)",
+            "payload": {
+                "proposedFixChars": 564,
+                "selectedHypothesisId": "H4"
+            }
+        },
+        {
+            "seq": 23,
+            "type": "APPROVAL_GATE",
+            "agent": "Orchestrator",
+            "summary": "HARD STOP: fix is a draft awaiting human approval — the agent takes no action",
+            "payload": {
+                "selectedHypothesisId": "H4",
+                "decisionType": "RECOMMEND_REMEDIATION"
+            }
+        }
+    ]
+}

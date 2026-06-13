@@ -1,0 +1,1019 @@
+{
+  "incidentId": "INC-e3082697",
+  "service": "order-service",
+  "citedSources": [
+    "postmortem-2025-11-order-service-npe.md",
+    "runbook-null-pointer.md"
+  ],
+  "proposedFix": "",
+  "postmortem": "",
+  "confidence": 0.0,
+  "status": "ESCALATED_TO_HUMAN",
+  "evidence": [
+    {
+      "id": "E1",
+      "type": "log",
+      "statement": "A java.lang.OutOfMemoryError: Java heap space was reported in com.shop.order.ReportGenerator.buildDailyReport at ReportGenerator.java:203.",
+      "source": "incident_report",
+      "reportDerived": true
+    },
+    {
+      "id": "E2",
+      "type": "timeline",
+      "statement": "The host rebooted twice in the last hour.",
+      "source": "incident_report",
+      "reportDerived": true
+    },
+    {
+      "id": "E3",
+      "type": "timeline",
+      "statement": "A deploy event occurred at 09:13 for order-service: v2.4.0 with 'legacy customer import' feature merged.",
+      "source": "observability",
+      "reportDerived": false
+    },
+    {
+      "id": "E4",
+      "type": "metric",
+      "statement": "order-service error_rate_percent increased from 0.3% at 09:10 to 4.1% at 09:13 and 18.7% at 09:14, remaining at 18.9% or higher through 09:18.",
+      "source": "observability",
+      "reportDerived": false
+    },
+    {
+      "id": "E5",
+      "type": "metric",
+      "statement": "order-service p95_latency_ms rose from 190 ms at 09:10 to 210 ms at 09:14 and was 205-208 ms from 09:15 to 09:18.",
+      "source": "observability",
+      "reportDerived": false
+    },
+    {
+      "id": "E6",
+      "type": "log",
+      "statement": "At 2026-06-06T09:14:01.224Z, LoyaltyClient logged 'Fetched profile' for customerId=C-10293 with loyaltyTier=null and source=legacy-import.",
+      "source": "observability",
+      "reportDerived": false
+    },
+    {
+      "id": "E7",
+      "type": "log",
+      "statement": "At 2026-06-06T09:14:01.226Z, OrderService logged a NullPointerException in applyLoyaltyDiscount at OrderService.java:42 stating 'Cannot invoke \"String.toUpperCase()\" because \"loyaltyTier\" is null' while processing customerId=C-10293.",
+      "source": "observability",
+      "reportDerived": false
+    },
+    {
+      "id": "E8",
+      "type": "symptom",
+      "statement": "At 2026-06-06T09:14:01.227Z, OrderController logged 'Responding 500 to POST /api/orders' for correlationId=8f3a-... .",
+      "source": "observability",
+      "reportDerived": false
+    }
+  ],
+  "hypotheses": [
+    {
+      "id": "H7",
+      "statement": "The 09:13 v2.4.0 deploy introduced a request-path null-handling defect: orders for customers coming from the merged legacy customer import can have `loyaltyTier=null`, and `applyLoyaltyDiscount` calls `toUpperCase()` on that null, producing NullPointerExceptions and HTTP 500s. This best explains the sharp post-deploy error spike; the reported host reboots indicate broader instability in the same window but are not as directly evidenced as the NPE path.",
+      "confidence": 0.86,
+      "supportingEvidenceIds": [
+        "E2",
+        "E3",
+        "E4",
+        "E6",
+        "E7",
+        "E8"
+      ],
+      "supportingCitationIds": [
+        "C1",
+        "C2"
+      ]
+    },
+    {
+      "id": "H8",
+      "statement": "The merged legacy customer import likely introduced a broader data-contract regression at the boundary: imported customer records were not normalized/validated, leaving unexpected null or malformed fields. That directly explains the observed `loyaltyTier` NullPointerException on orders and is also consistent with the incident-reported `ReportGenerator.buildDailyReport` failure if the same bad imported data was processed in the reporting path, leading to heap blowup and reboots.",
+      "confidence": 0.36,
+      "supportingEvidenceIds": [
+        "E1",
+        "E2",
+        "E3",
+        "E6",
+        "E7",
+        "E8"
+      ],
+      "supportingCitationIds": [
+        "C1",
+        "C2"
+      ]
+    }
+  ],
+  "critiques": [
+    {
+      "hypothesisId": "H7",
+      "status": "WEAK",
+      "reasons": [
+        "E6, E7, and E8 do substantively support the specific request-path mechanism: a legacy-import customer had loyaltyTier=null, OrderService threw a NullPointerException on toUpperCase() in applyLoyaltyDiscount, and the request returned HTTP 500.",
+        "E3 and E4 support correlation with the 09:13 deploy: the deploy happened at 09:13 and error_rate rose sharply immediately afterward; this matches the deploy-induced NPE pattern described in C2.",
+        "C1 is a close historical match for the same mechanism: null loyaltyTier from legacy data causing applyLoyaltyDiscount to fail with NPE and produce 500s.",
+        "But the hypothesis does not explain the incident-reported OutOfMemoryError in ReportGenerator at E1; under the reported-symptom rule, a theory that explains the observability data but not the reported symptom is at most WEAK.",
+        "Its claimed support from E2 is not real support for the NPE mechanism: host reboots do not specifically corroborate a null-handling defect, and H7 itself admits they are only loosely related.",
+        "The evidence set contains no observability corroboration for the reboot/OOM side of the incident report (E1, E2), so the hypothesis cannot be elevated to SUPPORTED for the overall incident despite strong support for the request-path failure."
+      ]
+    },
+    {
+      "hypothesisId": "H8",
+      "status": "WEAK",
+      "reasons": [
+        "E6, E7, and E8 support only the narrow fact that a legacy-import record had loyaltyTier=null and caused an NPE/HTTP 500 in the order path; they do not specifically show a broader boundary-validation regression involving other fields or malformed records.",
+        "E3 supports that the legacy customer import was merged in the 09:13 deploy, but that is consistent with multiple competing theories; by the discriminator rule it does not specifically prove the broader 'data-contract regression at the boundary' framing over the simpler null-handling bug.",
+        "C1 and C2 support nullability problems from legacy/external data and recommend normalization/defaulting, so they are directionally consistent with the boundary-validation idea; however, neither citation links such a defect to heap exhaustion, reboots, or ReportGenerator failures.",
+        "The hypothesis's extension from the observed loyaltyTier NPE to the incident-reported OutOfMemoryError in E1 is unverified speculation: there is no observability evidence showing imported data reached ReportGenerator, caused memory growth, or triggered the host reboots in E2.",
+        "Its claimed support from E1 and E2 is weak because those are incident_report items only, with no logs/metrics corroborating the supposed heap-blowup mechanism; per the evidence-quality rule, that prevents SUPPORTED status.",
+        "The hypothesis covers the reported symptom better than H7 by attempting to explain E1 and E2, but the key OOM/reboot linkage is not actually evidenced by any E or C item, so the overall claim remains thin."
+      ]
+    }
+  ],
+  "decision": {
+    "type": "ESCALATE_TO_HUMAN",
+    "selectedHypothesisId": null,
+    "rationale": "Retries are exhausted (2 of 2), and no hypothesis survived scrutiny above WEAK. By priority order, both H7 and H8 are only WEAK. H7 has stronger observability support and citation backing for the request-path failure (E3, E4, E6, E7, E8; C1, C2), but it does not explain the reported symptom in E1 (java.lang.OutOfMemoryError in ReportGenerator) and therefore cannot be selected for this incident. H8 attempts to cover E1 and E2 as well as the observed order-path failure, but its extension from the observed null-handling defect to ReportGenerator heap exhaustion and host reboots is speculative and lacks observability corroboration beyond incident_report items. The evidence is not absent overall, so this is not INSUFFICIENT_EVIDENCE; however, the grounded observability explains only a likely NPE/500 regression after the 09:13 deploy, while the reported OOM/reboot symptom remains unresolved. With weak survivors only and retries exhausted, the correct action is to escalate rather than force a remediation.",
+    "proposedFix": null,
+    "postmortem": null
+  },
+  "trace": [
+    {
+      "seq": 1,
+      "type": "INCIDENT_RECEIVED",
+      "agent": "Orchestrator",
+      "summary": "Incident received for order-service",
+      "payload": {
+        "service": "order-service",
+        "stackTraceChars": 162,
+        "logChars": 2215,
+        "metricChars": 814,
+        "timestamp": "2026-06-12T18:53:25.620686200Z"
+      }
+    },
+    {
+      "seq": 2,
+      "type": "REDACTION",
+      "agent": "Orchestrator",
+      "summary": "Secret redaction applied at the boundary (before any model sees the input)",
+      "payload": {
+        "stackTraceChanged": false,
+        "logsChanged": true,
+        "metricsChanged": false
+      }
+    },
+    {
+      "seq": 3,
+      "type": "AGENT_HANDOFF",
+      "agent": "Orchestrator",
+      "summary": "Orchestrator -> TriageAgent",
+      "payload": {
+        "agent": "TriageAgent"
+      }
+    },
+    {
+      "seq": 4,
+      "type": "EVIDENCE_EXTRACTED",
+      "agent": "TriageAgent",
+      "summary": "Extracted 8 evidence items (2 from the incident report)",
+      "payload": {
+        "count": 8,
+        "reportDerivedCount": 2,
+        "evidence": [
+          {
+            "id": "E1",
+            "type": "log",
+            "statement": "A java.lang.OutOfMemoryError: Java heap space was reported in com.shop.order.ReportGenerator.buildDailyReport at ReportGenerator.java:203.",
+            "source": "incident_report",
+            "reportDerived": true
+          },
+          {
+            "id": "E2",
+            "type": "timeline",
+            "statement": "The host rebooted twice in the last hour.",
+            "source": "incident_report",
+            "reportDerived": true
+          },
+          {
+            "id": "E3",
+            "type": "timeline",
+            "statement": "A deploy event occurred at 09:13 for order-service: v2.4.0 with 'legacy customer import' feature merged.",
+            "source": "observability",
+            "reportDerived": false
+          },
+          {
+            "id": "E4",
+            "type": "metric",
+            "statement": "order-service error_rate_percent increased from 0.3% at 09:10 to 4.1% at 09:13 and 18.7% at 09:14, remaining at 18.9% or higher through 09:18.",
+            "source": "observability",
+            "reportDerived": false
+          },
+          {
+            "id": "E5",
+            "type": "metric",
+            "statement": "order-service p95_latency_ms rose from 190 ms at 09:10 to 210 ms at 09:14 and was 205-208 ms from 09:15 to 09:18.",
+            "source": "observability",
+            "reportDerived": false
+          },
+          {
+            "id": "E6",
+            "type": "log",
+            "statement": "At 2026-06-06T09:14:01.224Z, LoyaltyClient logged 'Fetched profile' for customerId=C-10293 with loyaltyTier=null and source=legacy-import.",
+            "source": "observability",
+            "reportDerived": false
+          },
+          {
+            "id": "E7",
+            "type": "log",
+            "statement": "At 2026-06-06T09:14:01.226Z, OrderService logged a NullPointerException in applyLoyaltyDiscount at OrderService.java:42 stating 'Cannot invoke \"String.toUpperCase()\" because \"loyaltyTier\" is null' while processing customerId=C-10293.",
+            "source": "observability",
+            "reportDerived": false
+          },
+          {
+            "id": "E8",
+            "type": "symptom",
+            "statement": "At 2026-06-06T09:14:01.227Z, OrderController logged 'Responding 500 to POST /api/orders' for correlationId=8f3a-... .",
+            "source": "observability",
+            "reportDerived": false
+          }
+        ]
+      }
+    },
+    {
+      "seq": 5,
+      "type": "AGENT_HANDOFF",
+      "agent": "Orchestrator",
+      "summary": "Orchestrator -> KnowledgeAgent",
+      "payload": {
+        "agent": "KnowledgeAgent"
+      }
+    },
+    {
+      "seq": 6,
+      "type": "IQ_QUERY",
+      "agent": "KnowledgeAgent",
+      "summary": "Searching knowledge base: \"order-service NullPointerException loyaltyTier null toUpperCase legacy customer import applyLoyaltyDiscount 500 after deploy v2.4.0\"",
+      "payload": {
+        "query": "order-service NullPointerException loyaltyTier null toUpperCase legacy customer import applyLoyaltyDiscount 500 after deploy v2.4.0"
+      }
+    },
+    {
+      "seq": 7,
+      "type": "CITATIONS_RETRIEVED",
+      "agent": "KnowledgeAgent",
+      "summary": "Retrieved 2 cited snippets",
+      "payload": {
+        "count": 2,
+        "citationIds": [
+          "C1",
+          "C2"
+        ],
+        "sourceNames": [
+          "postmortem-2025-11-order-service-npe.md",
+          "runbook-null-pointer.md"
+        ]
+      }
+    },
+    {
+      "seq": 8,
+      "type": "AGENT_HANDOFF",
+      "agent": "Orchestrator",
+      "summary": "Orchestrator -> RootCauseAgent",
+      "payload": {
+        "agent": "RootCauseAgent"
+      }
+    },
+    {
+      "seq": 9,
+      "type": "HYPOTHESES_PROPOSED",
+      "agent": "RootCauseAgent",
+      "summary": "Proposed 3 competing hypotheses",
+      "payload": {
+        "count": 3,
+        "hypotheses": [
+          {
+            "id": "H1",
+            "statement": "The 09:13 v2.4.0 deploy introduced a request-path null-handling bug for legacy-import customers: `applyLoyaltyDiscount` assumes `loyaltyTier` is non-null and calls `toUpperCase()`, so orders for legacy-import customers return 500s. This best explains the sharp post-deploy error spike, while the reported OOM/reboots may be a concurrent secondary failure rather than the main driver of the 5xx incident.",
+            "confidence": 0.77,
+            "supportingEvidenceIds": [
+              "E2",
+              "E3",
+              "E4",
+              "E6",
+              "E7",
+              "E8"
+            ],
+            "supportingCitationIds": [
+              "C1",
+              "C2"
+            ]
+          },
+          {
+            "id": "H2",
+            "statement": "The merged 'legacy customer import' change in v2.4.0 introduced excessive heap usage in `ReportGenerator.buildDailyReport`—for example by loading/retaining too much imported customer data during report generation—causing `OutOfMemoryError`, repeated host reboots, and elevated request failures from process instability.",
+            "confidence": 0.69,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2",
+              "E3",
+              "E4"
+            ],
+            "supportingCitationIds": []
+          },
+          {
+            "id": "H3",
+            "statement": "A bad legacy-import data shape is the common cause: imported customer records contain unexpected nulls (proven for `loyaltyTier`) and likely also trigger pathological report-generation behavior, so the same newly merged legacy-import path causes both the request NPE/500s and the heap exhaustion seen in `buildDailyReport`.",
+            "confidence": 0.43,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2",
+              "E3",
+              "E4",
+              "E6",
+              "E7",
+              "E8"
+            ],
+            "supportingCitationIds": [
+              "C1",
+              "C2"
+            ]
+          }
+        ],
+        "afterRetry": 0
+      }
+    },
+    {
+      "seq": 10,
+      "type": "AGENT_HANDOFF",
+      "agent": "Orchestrator",
+      "summary": "Orchestrator -> CriticAgent",
+      "payload": {
+        "agent": "CriticAgent"
+      }
+    },
+    {
+      "seq": 11,
+      "type": "CRITIQUE",
+      "agent": "CriticAgent",
+      "summary": "Critiqued 3 hypotheses: H1=WEAK, H2=REJECTED, H3=WEAK",
+      "payload": {
+        "critiques": [
+          {
+            "hypothesisId": "H1",
+            "status": "WEAK",
+            "reasons": [
+              "E6, E7, and E8 specifically support a request-path null-handling failure for legacy-import customers: a legacy-import profile had loyaltyTier=null, applyLoyaltyDiscount threw a NullPointerException on toUpperCase(), and the request returned 500.",
+              "E3 and E4 are temporally consistent with a deploy-induced bug: the v2.4.0 deploy happened at 09:13 and error_rate jumped immediately afterward, which matches the deploy-correlation guidance in C2.",
+              "C1 and C2 describe this exact mechanism (legacy/externally sourced null loyaltyTier causing NPEs and 500s), so the cited knowledge is relevant.",
+              "However, the reported incident symptoms in E1 and E2 are an OutOfMemoryError in ReportGenerator.buildDailyReport and host reboots, not the request-path NPE/500 path. By the reported-symptom coverage rule, this hypothesis does not explain the incident_report evidence and can therefore be at most WEAK.",
+              "Its claimed support from E2 is not real support for the null-handling theory: host reboots do not specifically corroborate an applyLoyaltyDiscount null bug."
+            ]
+          },
+          {
+            "hypothesisId": "H2",
+            "status": "REJECTED",
+            "reasons": [
+              "E7 and E8 directly show a different concrete mechanism for the observed request failures: a NullPointerException in applyLoyaltyDiscount caused a 500 on POST /api/orders. That contradicts the claim that elevated request failures were caused by process instability from heap exhaustion.",
+              "E6 strengthens that contradiction by showing the failing input was a legacy-import customer with loyaltyTier=null immediately before the NPE, giving a specific request-path cause unrelated to ReportGenerator heap usage.",
+              "The hypothesis's claimed support from E4 is not specific support for heap exhaustion; a rising error_rate is equally consistent with many causes and is specifically explained here by E7-E8 instead.",
+              "Only E1 and E2 mention OOM/reboots, and both are incident_report items with no observability corroboration for the proposed mechanism tying legacy import to ReportGenerator memory growth. Under the evidence-quality rule, that is too thin to support this theory."
+            ]
+          },
+          {
+            "hypothesisId": "H3",
+            "status": "WEAK",
+            "reasons": [
+              "E6, E7, and E8 support only the first half of the hypothesis: bad legacy-import data with loyaltyTier=null caused a request-path NullPointerException and 500s.",
+              "C1 and C2 also support that null legacy-data can cause this exact NPE pattern in order-service.",
+              "But nothing in E1 or any other evidence ties the reported OutOfMemoryError in ReportGenerator.buildDailyReport to the same legacy-import data shape. The jump from 'null loyaltyTier exists' to 'likely also triggers pathological report-generation behavior' is speculative and unsupported by the cited evidence.",
+              "E3 and E4 show a deploy and an error spike, but they do not discriminate between 'legacy nulls caused request NPEs only' and the broader 'single common cause also caused heap exhaustion' theory. By the discriminator rule, they do not specifically support the common-cause claim.",
+              "Because the hypothesis tries to explain both the observability-side NPE/500s and the incident_report OOM/reboots, yet has substantive evidence only for the NPE side, it is at most WEAK."
+            ]
+          }
+        ],
+        "supportedCount": 0
+      }
+    },
+    {
+      "seq": 12,
+      "type": "HYPOTHESIS_DISCARDED",
+      "agent": "CriticAgent",
+      "summary": "Discarded H1 (WEAK) at retry 1/2 — E6, E7, and E8 specifically support a request-path null-handling failure for legacy-import customers: a legacy-import profile had loyaltyTier=null, applyLoyaltyDiscount threw a NullPointerException on toUpperCase(), and the request returned 500.",
+      "payload": {
+        "retryNumber": 1,
+        "maxRetries": 2,
+        "discarded": {
+          "hypothesis": {
+            "id": "H1",
+            "statement": "The 09:13 v2.4.0 deploy introduced a request-path null-handling bug for legacy-import customers: `applyLoyaltyDiscount` assumes `loyaltyTier` is non-null and calls `toUpperCase()`, so orders for legacy-import customers return 500s. This best explains the sharp post-deploy error spike, while the reported OOM/reboots may be a concurrent secondary failure rather than the main driver of the 5xx incident.",
+            "confidence": 0.77,
+            "supportingEvidenceIds": [
+              "E2",
+              "E3",
+              "E4",
+              "E6",
+              "E7",
+              "E8"
+            ],
+            "supportingCitationIds": [
+              "C1",
+              "C2"
+            ]
+          },
+          "status": "WEAK",
+          "reasons": [
+            "E6, E7, and E8 specifically support a request-path null-handling failure for legacy-import customers: a legacy-import profile had loyaltyTier=null, applyLoyaltyDiscount threw a NullPointerException on toUpperCase(), and the request returned 500.",
+            "E3 and E4 are temporally consistent with a deploy-induced bug: the v2.4.0 deploy happened at 09:13 and error_rate jumped immediately afterward, which matches the deploy-correlation guidance in C2.",
+            "C1 and C2 describe this exact mechanism (legacy/externally sourced null loyaltyTier causing NPEs and 500s), so the cited knowledge is relevant.",
+            "However, the reported incident symptoms in E1 and E2 are an OutOfMemoryError in ReportGenerator.buildDailyReport and host reboots, not the request-path NPE/500 path. By the reported-symptom coverage rule, this hypothesis does not explain the incident_report evidence and can therefore be at most WEAK.",
+            "Its claimed support from E2 is not real support for the null-handling theory: host reboots do not specifically corroborate an applyLoyaltyDiscount null bug."
+          ]
+        }
+      }
+    },
+    {
+      "seq": 13,
+      "type": "HYPOTHESIS_DISCARDED",
+      "agent": "CriticAgent",
+      "summary": "Discarded H2 (REJECTED) at retry 1/2 — E7 and E8 directly show a different concrete mechanism for the observed request failures: a NullPointerException in applyLoyaltyDiscount caused a 500 on POST /api/orders. That contradicts the claim that elevated request failures were caused by process instability from heap exhaustion.",
+      "payload": {
+        "retryNumber": 1,
+        "maxRetries": 2,
+        "discarded": {
+          "hypothesis": {
+            "id": "H2",
+            "statement": "The merged 'legacy customer import' change in v2.4.0 introduced excessive heap usage in `ReportGenerator.buildDailyReport`—for example by loading/retaining too much imported customer data during report generation—causing `OutOfMemoryError`, repeated host reboots, and elevated request failures from process instability.",
+            "confidence": 0.69,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2",
+              "E3",
+              "E4"
+            ],
+            "supportingCitationIds": []
+          },
+          "status": "REJECTED",
+          "reasons": [
+            "E7 and E8 directly show a different concrete mechanism for the observed request failures: a NullPointerException in applyLoyaltyDiscount caused a 500 on POST /api/orders. That contradicts the claim that elevated request failures were caused by process instability from heap exhaustion.",
+            "E6 strengthens that contradiction by showing the failing input was a legacy-import customer with loyaltyTier=null immediately before the NPE, giving a specific request-path cause unrelated to ReportGenerator heap usage.",
+            "The hypothesis's claimed support from E4 is not specific support for heap exhaustion; a rising error_rate is equally consistent with many causes and is specifically explained here by E7-E8 instead.",
+            "Only E1 and E2 mention OOM/reboots, and both are incident_report items with no observability corroboration for the proposed mechanism tying legacy import to ReportGenerator memory growth. Under the evidence-quality rule, that is too thin to support this theory."
+          ]
+        }
+      }
+    },
+    {
+      "seq": 14,
+      "type": "HYPOTHESIS_DISCARDED",
+      "agent": "CriticAgent",
+      "summary": "Discarded H3 (WEAK) at retry 1/2 — E6, E7, and E8 support only the first half of the hypothesis: bad legacy-import data with loyaltyTier=null caused a request-path NullPointerException and 500s.",
+      "payload": {
+        "retryNumber": 1,
+        "maxRetries": 2,
+        "discarded": {
+          "hypothesis": {
+            "id": "H3",
+            "statement": "A bad legacy-import data shape is the common cause: imported customer records contain unexpected nulls (proven for `loyaltyTier`) and likely also trigger pathological report-generation behavior, so the same newly merged legacy-import path causes both the request NPE/500s and the heap exhaustion seen in `buildDailyReport`.",
+            "confidence": 0.43,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2",
+              "E3",
+              "E4",
+              "E6",
+              "E7",
+              "E8"
+            ],
+            "supportingCitationIds": [
+              "C1",
+              "C2"
+            ]
+          },
+          "status": "WEAK",
+          "reasons": [
+            "E6, E7, and E8 support only the first half of the hypothesis: bad legacy-import data with loyaltyTier=null caused a request-path NullPointerException and 500s.",
+            "C1 and C2 also support that null legacy-data can cause this exact NPE pattern in order-service.",
+            "But nothing in E1 or any other evidence ties the reported OutOfMemoryError in ReportGenerator.buildDailyReport to the same legacy-import data shape. The jump from 'null loyaltyTier exists' to 'likely also triggers pathological report-generation behavior' is speculative and unsupported by the cited evidence.",
+            "E3 and E4 show a deploy and an error spike, but they do not discriminate between 'legacy nulls caused request NPEs only' and the broader 'single common cause also caused heap exhaustion' theory. By the discriminator rule, they do not specifically support the common-cause claim.",
+            "Because the hypothesis tries to explain both the observability-side NPE/500s and the incident_report OOM/reboots, yet has substantive evidence only for the NPE side, it is at most WEAK."
+          ]
+        }
+      }
+    },
+    {
+      "seq": 15,
+      "type": "RETRY_TRIGGERED",
+      "agent": "Orchestrator",
+      "summary": "Retry 1/2 — no SUPPORTED hypothesis; sending 3 back to RootCauseAgent for re-thinking",
+      "payload": {
+        "retryNumber": 1,
+        "maxRetries": 2,
+        "rejectedHypotheses": [
+          {
+            "hypothesis": {
+              "id": "H1",
+              "statement": "The 09:13 v2.4.0 deploy introduced a request-path null-handling bug for legacy-import customers: `applyLoyaltyDiscount` assumes `loyaltyTier` is non-null and calls `toUpperCase()`, so orders for legacy-import customers return 500s. This best explains the sharp post-deploy error spike, while the reported OOM/reboots may be a concurrent secondary failure rather than the main driver of the 5xx incident.",
+              "confidence": 0.77,
+              "supportingEvidenceIds": [
+                "E2",
+                "E3",
+                "E4",
+                "E6",
+                "E7",
+                "E8"
+              ],
+              "supportingCitationIds": [
+                "C1",
+                "C2"
+              ]
+            },
+            "status": "WEAK",
+            "reasons": [
+              "E6, E7, and E8 specifically support a request-path null-handling failure for legacy-import customers: a legacy-import profile had loyaltyTier=null, applyLoyaltyDiscount threw a NullPointerException on toUpperCase(), and the request returned 500.",
+              "E3 and E4 are temporally consistent with a deploy-induced bug: the v2.4.0 deploy happened at 09:13 and error_rate jumped immediately afterward, which matches the deploy-correlation guidance in C2.",
+              "C1 and C2 describe this exact mechanism (legacy/externally sourced null loyaltyTier causing NPEs and 500s), so the cited knowledge is relevant.",
+              "However, the reported incident symptoms in E1 and E2 are an OutOfMemoryError in ReportGenerator.buildDailyReport and host reboots, not the request-path NPE/500 path. By the reported-symptom coverage rule, this hypothesis does not explain the incident_report evidence and can therefore be at most WEAK.",
+              "Its claimed support from E2 is not real support for the null-handling theory: host reboots do not specifically corroborate an applyLoyaltyDiscount null bug."
+            ]
+          },
+          {
+            "hypothesis": {
+              "id": "H2",
+              "statement": "The merged 'legacy customer import' change in v2.4.0 introduced excessive heap usage in `ReportGenerator.buildDailyReport`—for example by loading/retaining too much imported customer data during report generation—causing `OutOfMemoryError`, repeated host reboots, and elevated request failures from process instability.",
+              "confidence": 0.69,
+              "supportingEvidenceIds": [
+                "E1",
+                "E2",
+                "E3",
+                "E4"
+              ],
+              "supportingCitationIds": []
+            },
+            "status": "REJECTED",
+            "reasons": [
+              "E7 and E8 directly show a different concrete mechanism for the observed request failures: a NullPointerException in applyLoyaltyDiscount caused a 500 on POST /api/orders. That contradicts the claim that elevated request failures were caused by process instability from heap exhaustion.",
+              "E6 strengthens that contradiction by showing the failing input was a legacy-import customer with loyaltyTier=null immediately before the NPE, giving a specific request-path cause unrelated to ReportGenerator heap usage.",
+              "The hypothesis's claimed support from E4 is not specific support for heap exhaustion; a rising error_rate is equally consistent with many causes and is specifically explained here by E7-E8 instead.",
+              "Only E1 and E2 mention OOM/reboots, and both are incident_report items with no observability corroboration for the proposed mechanism tying legacy import to ReportGenerator memory growth. Under the evidence-quality rule, that is too thin to support this theory."
+            ]
+          },
+          {
+            "hypothesis": {
+              "id": "H3",
+              "statement": "A bad legacy-import data shape is the common cause: imported customer records contain unexpected nulls (proven for `loyaltyTier`) and likely also trigger pathological report-generation behavior, so the same newly merged legacy-import path causes both the request NPE/500s and the heap exhaustion seen in `buildDailyReport`.",
+              "confidence": 0.43,
+              "supportingEvidenceIds": [
+                "E1",
+                "E2",
+                "E3",
+                "E4",
+                "E6",
+                "E7",
+                "E8"
+              ],
+              "supportingCitationIds": [
+                "C1",
+                "C2"
+              ]
+            },
+            "status": "WEAK",
+            "reasons": [
+              "E6, E7, and E8 support only the first half of the hypothesis: bad legacy-import data with loyaltyTier=null caused a request-path NullPointerException and 500s.",
+              "C1 and C2 also support that null legacy-data can cause this exact NPE pattern in order-service.",
+              "But nothing in E1 or any other evidence ties the reported OutOfMemoryError in ReportGenerator.buildDailyReport to the same legacy-import data shape. The jump from 'null loyaltyTier exists' to 'likely also triggers pathological report-generation behavior' is speculative and unsupported by the cited evidence.",
+              "E3 and E4 show a deploy and an error spike, but they do not discriminate between 'legacy nulls caused request NPEs only' and the broader 'single common cause also caused heap exhaustion' theory. By the discriminator rule, they do not specifically support the common-cause claim.",
+              "Because the hypothesis tries to explain both the observability-side NPE/500s and the incident_report OOM/reboots, yet has substantive evidence only for the NPE side, it is at most WEAK."
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "seq": 16,
+      "type": "AGENT_HANDOFF",
+      "agent": "Orchestrator",
+      "summary": "Orchestrator -> RootCauseAgent",
+      "payload": {
+        "agent": "RootCauseAgent"
+      }
+    },
+    {
+      "seq": 17,
+      "type": "HYPOTHESES_PROPOSED",
+      "agent": "RootCauseAgent",
+      "summary": "Proposed 3 competing hypotheses (re-think after rejection)",
+      "payload": {
+        "count": 3,
+        "hypotheses": [
+          {
+            "id": "H4",
+            "statement": "A separate heap-exhaustion failure occurred in the daily-report path: `ReportGenerator.buildDailyReport` consumed more Java heap than available, triggered `OutOfMemoryError`, and the JVM/host restarted twice. The observed order 500s are better explained by the concurrent null-handling bug in `applyLoyaltyDiscount`, so this hypothesis treats the reported OOM/reboots as a distinct incident happening at the same time.",
+            "confidence": 0.61,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2",
+              "E7",
+              "E8"
+            ],
+            "supportingCitationIds": []
+          },
+          {
+            "id": "H5",
+            "statement": "The 09:13 `v2.4.0` deploy likely introduced a new memory regression in or around report generation, causing `ReportGenerator.buildDailyReport` to exhaust heap and leading to repeated host reboots; the same deploy also exposed a separate request-path null bug for legacy-import customers. This explains both the tight timing with the deploy and why two different failure signatures appeared after 09:13.",
+            "confidence": 0.41,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2",
+              "E3",
+              "E4",
+              "E7",
+              "E8"
+            ],
+            "supportingCitationIds": [
+              "C2"
+            ]
+          },
+          {
+            "id": "H6",
+            "statement": "The reported incident was primarily an environment/capacity problem rather than a new code defect: the JVM heap available on the host was insufficient for the daily report workload, so `buildDailyReport` hit `OutOfMemoryError` and the host rebooted repeatedly. The request 500 spike is then a concurrent but separate application bug evidenced by the null `loyaltyTier` path.",
+            "confidence": 0.28,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2",
+              "E6",
+              "E7",
+              "E8"
+            ],
+            "supportingCitationIds": [
+              "C1",
+              "C2"
+            ]
+          }
+        ],
+        "afterRetry": 1
+      }
+    },
+    {
+      "seq": 18,
+      "type": "AGENT_HANDOFF",
+      "agent": "Orchestrator",
+      "summary": "Orchestrator -> CriticAgent",
+      "payload": {
+        "agent": "CriticAgent"
+      }
+    },
+    {
+      "seq": 19,
+      "type": "CRITIQUE",
+      "agent": "CriticAgent",
+      "summary": "Critiqued 3 hypotheses: H4=WEAK, H5=WEAK, H6=WEAK",
+      "payload": {
+        "critiques": [
+          {
+            "hypothesisId": "H4",
+            "status": "WEAK",
+            "reasons": [
+              "E7 and E8 specifically support a request-path NullPointerException causing order 500s, but E1 and E2 are only incident_report items for the alleged OOM/reboots; there is no observability evidence that a separate heap-exhaustion incident actually occurred, so the 'distinct concurrent incident' part is unverified.",
+              "E2 shows the host rebooted twice, but it does not show that `ReportGenerator.buildDailyReport` or an OOM caused those reboots; the causal chain claimed by H4 is assumed rather than evidenced.",
+              "H4's claimed support from E7 and E8 does not support the heap-exhaustion mechanism at all; those items support the competing explanation for the order failures, not the alleged daily-report OOM incident.",
+              "Because the only support for the OOM path is E1/E2 from the incident report and there is no corroborating log/metric for heap pressure, JVM crash, or report execution, the evidence quality is too thin to rate this above WEAK."
+            ]
+          },
+          {
+            "hypothesisId": "H5",
+            "status": "WEAK",
+            "reasons": [
+              "E3 and E4 support that something broke right after the 09:13 deploy, but E7 and E8 identify a specific request-path NullPointerException as the observed failure mechanism for the 500 spike; none of E1, E2, E3, E4, E7, or E8 specifically tie the deploy to a memory regression in `ReportGenerator.buildDailyReport`.",
+              "E1 and E2 are incident_report items only; there is no observability evidence of heap growth, GC distress, OOM logs from the JVM, or report-job activity after the deploy, so the memory-regression half of H5 is uncorroborated.",
+              "C2 is about diagnosing NullPointerExceptions in request handling and correlating them with deploys; it supports suspicion of the NPE path seen in E7/E8, not a heap-exhaustion regression in report generation, so H5's cited knowledge does not actually support its memory claim.",
+              "The 'two different failure signatures appeared after 09:13' claim is not established by observability: E7/E8 show one concrete signature (NPE -> 500), while the OOM/reboots come only from E1/E2 incident_report and are not independently verified."
+            ]
+          },
+          {
+            "hypothesisId": "H6",
+            "status": "WEAK",
+            "reasons": [
+              "There is no evidence item showing insufficient heap sizing, memory saturation, or capacity exhaustion on the host; E1 reports an OOM in `ReportGenerator.buildDailyReport` and E2 reports reboots, but neither demonstrates an environment/capacity cause rather than an application memory bug.",
+              "E6, E7, and E8 positively show a separate application defect in the request path: a null `loyaltyTier` from `legacy-import` leads to a NullPointerException and HTTP 500. That explains the observed service errors, but it does not support H6's claim that the reported incident was 'primarily' an environment/capacity problem.",
+              "C1 and C2 both describe null-handling/code-defect patterns for request failures, especially involving legacy data; they support the competing code-defect explanation for the observed 500s, not the hypothesis of inadequate JVM heap/capacity.",
+              "H6's claimed support from E6/E7/E8 and C1/C2 does not actually support the heap-capacity mechanism; those items support only the concurrent null-tier bug, leaving the 'environment/capacity' root cause for the OOM/reboots unverified and therefore at most WEAK."
+            ]
+          }
+        ],
+        "supportedCount": 0
+      }
+    },
+    {
+      "seq": 20,
+      "type": "HYPOTHESIS_DISCARDED",
+      "agent": "CriticAgent",
+      "summary": "Discarded H4 (WEAK) at retry 2/2 — E7 and E8 specifically support a request-path NullPointerException causing order 500s, but E1 and E2 are only incident_report items for the alleged OOM/reboots; there is no observability evidence that a separate heap-exhaustion incident actually occurred, so the 'distinct concurrent incident' part is unverified.",
+      "payload": {
+        "retryNumber": 2,
+        "maxRetries": 2,
+        "discarded": {
+          "hypothesis": {
+            "id": "H4",
+            "statement": "A separate heap-exhaustion failure occurred in the daily-report path: `ReportGenerator.buildDailyReport` consumed more Java heap than available, triggered `OutOfMemoryError`, and the JVM/host restarted twice. The observed order 500s are better explained by the concurrent null-handling bug in `applyLoyaltyDiscount`, so this hypothesis treats the reported OOM/reboots as a distinct incident happening at the same time.",
+            "confidence": 0.61,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2",
+              "E7",
+              "E8"
+            ],
+            "supportingCitationIds": []
+          },
+          "status": "WEAK",
+          "reasons": [
+            "E7 and E8 specifically support a request-path NullPointerException causing order 500s, but E1 and E2 are only incident_report items for the alleged OOM/reboots; there is no observability evidence that a separate heap-exhaustion incident actually occurred, so the 'distinct concurrent incident' part is unverified.",
+            "E2 shows the host rebooted twice, but it does not show that `ReportGenerator.buildDailyReport` or an OOM caused those reboots; the causal chain claimed by H4 is assumed rather than evidenced.",
+            "H4's claimed support from E7 and E8 does not support the heap-exhaustion mechanism at all; those items support the competing explanation for the order failures, not the alleged daily-report OOM incident.",
+            "Because the only support for the OOM path is E1/E2 from the incident report and there is no corroborating log/metric for heap pressure, JVM crash, or report execution, the evidence quality is too thin to rate this above WEAK."
+          ]
+        }
+      }
+    },
+    {
+      "seq": 21,
+      "type": "HYPOTHESIS_DISCARDED",
+      "agent": "CriticAgent",
+      "summary": "Discarded H5 (WEAK) at retry 2/2 — E3 and E4 support that something broke right after the 09:13 deploy, but E7 and E8 identify a specific request-path NullPointerException as the observed failure mechanism for the 500 spike; none of E1, E2, E3, E4, E7, or E8 specifically tie the deploy to a memory regression in `ReportGenerator.buildDailyReport`.",
+      "payload": {
+        "retryNumber": 2,
+        "maxRetries": 2,
+        "discarded": {
+          "hypothesis": {
+            "id": "H5",
+            "statement": "The 09:13 `v2.4.0` deploy likely introduced a new memory regression in or around report generation, causing `ReportGenerator.buildDailyReport` to exhaust heap and leading to repeated host reboots; the same deploy also exposed a separate request-path null bug for legacy-import customers. This explains both the tight timing with the deploy and why two different failure signatures appeared after 09:13.",
+            "confidence": 0.41,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2",
+              "E3",
+              "E4",
+              "E7",
+              "E8"
+            ],
+            "supportingCitationIds": [
+              "C2"
+            ]
+          },
+          "status": "WEAK",
+          "reasons": [
+            "E3 and E4 support that something broke right after the 09:13 deploy, but E7 and E8 identify a specific request-path NullPointerException as the observed failure mechanism for the 500 spike; none of E1, E2, E3, E4, E7, or E8 specifically tie the deploy to a memory regression in `ReportGenerator.buildDailyReport`.",
+            "E1 and E2 are incident_report items only; there is no observability evidence of heap growth, GC distress, OOM logs from the JVM, or report-job activity after the deploy, so the memory-regression half of H5 is uncorroborated.",
+            "C2 is about diagnosing NullPointerExceptions in request handling and correlating them with deploys; it supports suspicion of the NPE path seen in E7/E8, not a heap-exhaustion regression in report generation, so H5's cited knowledge does not actually support its memory claim.",
+            "The 'two different failure signatures appeared after 09:13' claim is not established by observability: E7/E8 show one concrete signature (NPE -> 500), while the OOM/reboots come only from E1/E2 incident_report and are not independently verified."
+          ]
+        }
+      }
+    },
+    {
+      "seq": 22,
+      "type": "HYPOTHESIS_DISCARDED",
+      "agent": "CriticAgent",
+      "summary": "Discarded H6 (WEAK) at retry 2/2 — There is no evidence item showing insufficient heap sizing, memory saturation, or capacity exhaustion on the host; E1 reports an OOM in `ReportGenerator.buildDailyReport` and E2 reports reboots, but neither demonstrates an environment/capacity cause rather than an application memory bug.",
+      "payload": {
+        "retryNumber": 2,
+        "maxRetries": 2,
+        "discarded": {
+          "hypothesis": {
+            "id": "H6",
+            "statement": "The reported incident was primarily an environment/capacity problem rather than a new code defect: the JVM heap available on the host was insufficient for the daily report workload, so `buildDailyReport` hit `OutOfMemoryError` and the host rebooted repeatedly. The request 500 spike is then a concurrent but separate application bug evidenced by the null `loyaltyTier` path.",
+            "confidence": 0.28,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2",
+              "E6",
+              "E7",
+              "E8"
+            ],
+            "supportingCitationIds": [
+              "C1",
+              "C2"
+            ]
+          },
+          "status": "WEAK",
+          "reasons": [
+            "There is no evidence item showing insufficient heap sizing, memory saturation, or capacity exhaustion on the host; E1 reports an OOM in `ReportGenerator.buildDailyReport` and E2 reports reboots, but neither demonstrates an environment/capacity cause rather than an application memory bug.",
+            "E6, E7, and E8 positively show a separate application defect in the request path: a null `loyaltyTier` from `legacy-import` leads to a NullPointerException and HTTP 500. That explains the observed service errors, but it does not support H6's claim that the reported incident was 'primarily' an environment/capacity problem.",
+            "C1 and C2 both describe null-handling/code-defect patterns for request failures, especially involving legacy data; they support the competing code-defect explanation for the observed 500s, not the hypothesis of inadequate JVM heap/capacity.",
+            "H6's claimed support from E6/E7/E8 and C1/C2 does not actually support the heap-capacity mechanism; those items support only the concurrent null-tier bug, leaving the 'environment/capacity' root cause for the OOM/reboots unverified and therefore at most WEAK."
+          ]
+        }
+      }
+    },
+    {
+      "seq": 23,
+      "type": "RETRY_TRIGGERED",
+      "agent": "Orchestrator",
+      "summary": "Retry 2/2 — no SUPPORTED hypothesis; sending 3 back to RootCauseAgent for re-thinking",
+      "payload": {
+        "retryNumber": 2,
+        "maxRetries": 2,
+        "rejectedHypotheses": [
+          {
+            "hypothesis": {
+              "id": "H4",
+              "statement": "A separate heap-exhaustion failure occurred in the daily-report path: `ReportGenerator.buildDailyReport` consumed more Java heap than available, triggered `OutOfMemoryError`, and the JVM/host restarted twice. The observed order 500s are better explained by the concurrent null-handling bug in `applyLoyaltyDiscount`, so this hypothesis treats the reported OOM/reboots as a distinct incident happening at the same time.",
+              "confidence": 0.61,
+              "supportingEvidenceIds": [
+                "E1",
+                "E2",
+                "E7",
+                "E8"
+              ],
+              "supportingCitationIds": []
+            },
+            "status": "WEAK",
+            "reasons": [
+              "E7 and E8 specifically support a request-path NullPointerException causing order 500s, but E1 and E2 are only incident_report items for the alleged OOM/reboots; there is no observability evidence that a separate heap-exhaustion incident actually occurred, so the 'distinct concurrent incident' part is unverified.",
+              "E2 shows the host rebooted twice, but it does not show that `ReportGenerator.buildDailyReport` or an OOM caused those reboots; the causal chain claimed by H4 is assumed rather than evidenced.",
+              "H4's claimed support from E7 and E8 does not support the heap-exhaustion mechanism at all; those items support the competing explanation for the order failures, not the alleged daily-report OOM incident.",
+              "Because the only support for the OOM path is E1/E2 from the incident report and there is no corroborating log/metric for heap pressure, JVM crash, or report execution, the evidence quality is too thin to rate this above WEAK."
+            ]
+          },
+          {
+            "hypothesis": {
+              "id": "H5",
+              "statement": "The 09:13 `v2.4.0` deploy likely introduced a new memory regression in or around report generation, causing `ReportGenerator.buildDailyReport` to exhaust heap and leading to repeated host reboots; the same deploy also exposed a separate request-path null bug for legacy-import customers. This explains both the tight timing with the deploy and why two different failure signatures appeared after 09:13.",
+              "confidence": 0.41,
+              "supportingEvidenceIds": [
+                "E1",
+                "E2",
+                "E3",
+                "E4",
+                "E7",
+                "E8"
+              ],
+              "supportingCitationIds": [
+                "C2"
+              ]
+            },
+            "status": "WEAK",
+            "reasons": [
+              "E3 and E4 support that something broke right after the 09:13 deploy, but E7 and E8 identify a specific request-path NullPointerException as the observed failure mechanism for the 500 spike; none of E1, E2, E3, E4, E7, or E8 specifically tie the deploy to a memory regression in `ReportGenerator.buildDailyReport`.",
+              "E1 and E2 are incident_report items only; there is no observability evidence of heap growth, GC distress, OOM logs from the JVM, or report-job activity after the deploy, so the memory-regression half of H5 is uncorroborated.",
+              "C2 is about diagnosing NullPointerExceptions in request handling and correlating them with deploys; it supports suspicion of the NPE path seen in E7/E8, not a heap-exhaustion regression in report generation, so H5's cited knowledge does not actually support its memory claim.",
+              "The 'two different failure signatures appeared after 09:13' claim is not established by observability: E7/E8 show one concrete signature (NPE -> 500), while the OOM/reboots come only from E1/E2 incident_report and are not independently verified."
+            ]
+          },
+          {
+            "hypothesis": {
+              "id": "H6",
+              "statement": "The reported incident was primarily an environment/capacity problem rather than a new code defect: the JVM heap available on the host was insufficient for the daily report workload, so `buildDailyReport` hit `OutOfMemoryError` and the host rebooted repeatedly. The request 500 spike is then a concurrent but separate application bug evidenced by the null `loyaltyTier` path.",
+              "confidence": 0.28,
+              "supportingEvidenceIds": [
+                "E1",
+                "E2",
+                "E6",
+                "E7",
+                "E8"
+              ],
+              "supportingCitationIds": [
+                "C1",
+                "C2"
+              ]
+            },
+            "status": "WEAK",
+            "reasons": [
+              "There is no evidence item showing insufficient heap sizing, memory saturation, or capacity exhaustion on the host; E1 reports an OOM in `ReportGenerator.buildDailyReport` and E2 reports reboots, but neither demonstrates an environment/capacity cause rather than an application memory bug.",
+              "E6, E7, and E8 positively show a separate application defect in the request path: a null `loyaltyTier` from `legacy-import` leads to a NullPointerException and HTTP 500. That explains the observed service errors, but it does not support H6's claim that the reported incident was 'primarily' an environment/capacity problem.",
+              "C1 and C2 both describe null-handling/code-defect patterns for request failures, especially involving legacy data; they support the competing code-defect explanation for the observed 500s, not the hypothesis of inadequate JVM heap/capacity.",
+              "H6's claimed support from E6/E7/E8 and C1/C2 does not actually support the heap-capacity mechanism; those items support only the concurrent null-tier bug, leaving the 'environment/capacity' root cause for the OOM/reboots unverified and therefore at most WEAK."
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "seq": 24,
+      "type": "AGENT_HANDOFF",
+      "agent": "Orchestrator",
+      "summary": "Orchestrator -> RootCauseAgent",
+      "payload": {
+        "agent": "RootCauseAgent"
+      }
+    },
+    {
+      "seq": 25,
+      "type": "HYPOTHESES_PROPOSED",
+      "agent": "RootCauseAgent",
+      "summary": "Proposed 2 competing hypotheses (re-think after rejection)",
+      "payload": {
+        "count": 2,
+        "hypotheses": [
+          {
+            "id": "H7",
+            "statement": "The 09:13 v2.4.0 deploy introduced a request-path null-handling defect: orders for customers coming from the merged legacy customer import can have `loyaltyTier=null`, and `applyLoyaltyDiscount` calls `toUpperCase()` on that null, producing NullPointerExceptions and HTTP 500s. This best explains the sharp post-deploy error spike; the reported host reboots indicate broader instability in the same window but are not as directly evidenced as the NPE path.",
+            "confidence": 0.86,
+            "supportingEvidenceIds": [
+              "E2",
+              "E3",
+              "E4",
+              "E6",
+              "E7",
+              "E8"
+            ],
+            "supportingCitationIds": [
+              "C1",
+              "C2"
+            ]
+          },
+          {
+            "id": "H8",
+            "statement": "The merged legacy customer import likely introduced a broader data-contract regression at the boundary: imported customer records were not normalized/validated, leaving unexpected null or malformed fields. That directly explains the observed `loyaltyTier` NullPointerException on orders and is also consistent with the incident-reported `ReportGenerator.buildDailyReport` failure if the same bad imported data was processed in the reporting path, leading to heap blowup and reboots.",
+            "confidence": 0.36,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2",
+              "E3",
+              "E6",
+              "E7",
+              "E8"
+            ],
+            "supportingCitationIds": [
+              "C1",
+              "C2"
+            ]
+          }
+        ],
+        "afterRetry": 2
+      }
+    },
+    {
+      "seq": 26,
+      "type": "AGENT_HANDOFF",
+      "agent": "Orchestrator",
+      "summary": "Orchestrator -> CriticAgent",
+      "payload": {
+        "agent": "CriticAgent"
+      }
+    },
+    {
+      "seq": 27,
+      "type": "CRITIQUE",
+      "agent": "CriticAgent",
+      "summary": "Critiqued 2 hypotheses: H7=WEAK, H8=WEAK",
+      "payload": {
+        "critiques": [
+          {
+            "hypothesisId": "H7",
+            "status": "WEAK",
+            "reasons": [
+              "E6, E7, and E8 do substantively support the specific request-path mechanism: a legacy-import customer had loyaltyTier=null, OrderService threw a NullPointerException on toUpperCase() in applyLoyaltyDiscount, and the request returned HTTP 500.",
+              "E3 and E4 support correlation with the 09:13 deploy: the deploy happened at 09:13 and error_rate rose sharply immediately afterward; this matches the deploy-induced NPE pattern described in C2.",
+              "C1 is a close historical match for the same mechanism: null loyaltyTier from legacy data causing applyLoyaltyDiscount to fail with NPE and produce 500s.",
+              "But the hypothesis does not explain the incident-reported OutOfMemoryError in ReportGenerator at E1; under the reported-symptom rule, a theory that explains the observability data but not the reported symptom is at most WEAK.",
+              "Its claimed support from E2 is not real support for the NPE mechanism: host reboots do not specifically corroborate a null-handling defect, and H7 itself admits they are only loosely related.",
+              "The evidence set contains no observability corroboration for the reboot/OOM side of the incident report (E1, E2), so the hypothesis cannot be elevated to SUPPORTED for the overall incident despite strong support for the request-path failure."
+            ]
+          },
+          {
+            "hypothesisId": "H8",
+            "status": "WEAK",
+            "reasons": [
+              "E6, E7, and E8 support only the narrow fact that a legacy-import record had loyaltyTier=null and caused an NPE/HTTP 500 in the order path; they do not specifically show a broader boundary-validation regression involving other fields or malformed records.",
+              "E3 supports that the legacy customer import was merged in the 09:13 deploy, but that is consistent with multiple competing theories; by the discriminator rule it does not specifically prove the broader 'data-contract regression at the boundary' framing over the simpler null-handling bug.",
+              "C1 and C2 support nullability problems from legacy/external data and recommend normalization/defaulting, so they are directionally consistent with the boundary-validation idea; however, neither citation links such a defect to heap exhaustion, reboots, or ReportGenerator failures.",
+              "The hypothesis's extension from the observed loyaltyTier NPE to the incident-reported OutOfMemoryError in E1 is unverified speculation: there is no observability evidence showing imported data reached ReportGenerator, caused memory growth, or triggered the host reboots in E2.",
+              "Its claimed support from E1 and E2 is weak because those are incident_report items only, with no logs/metrics corroborating the supposed heap-blowup mechanism; per the evidence-quality rule, that prevents SUPPORTED status.",
+              "The hypothesis covers the reported symptom better than H7 by attempting to explain E1 and E2, but the key OOM/reboot linkage is not actually evidenced by any E or C item, so the overall claim remains thin."
+            ]
+          }
+        ],
+        "supportedCount": 0
+      }
+    },
+    {
+      "seq": 28,
+      "type": "AGENT_HANDOFF",
+      "agent": "Orchestrator",
+      "summary": "Orchestrator -> JudgeAgent",
+      "payload": {
+        "agent": "JudgeAgent"
+      }
+    },
+    {
+      "seq": 29,
+      "type": "DECISION",
+      "agent": "JudgeAgent",
+      "summary": "Decision: ESCALATE_TO_HUMAN",
+      "payload": {
+        "type": "ESCALATE_TO_HUMAN",
+        "selectedHypothesisId": null,
+        "rationale": "Retries are exhausted (2 of 2), and no hypothesis survived scrutiny above WEAK. By priority order, both H7 and H8 are only WEAK. H7 has stronger observability support and citation backing for the request-path failure (E3, E4, E6, E7, E8; C1, C2), but it does not explain the reported symptom in E1 (java.lang.OutOfMemoryError in ReportGenerator) and therefore cannot be selected for this incident. H8 attempts to cover E1 and E2 as well as the observed order-path failure, but its extension from the observed null-handling defect to ReportGenerator heap exhaustion and host reboots is speculative and lacks observability corroboration beyond incident_report items. The evidence is not absent overall, so this is not INSUFFICIENT_EVIDENCE; however, the grounded observability explains only a likely NPE/500 regression after the 09:13 deploy, while the reported OOM/reboot symptom remains unresolved. With weak survivors only and retries exhausted, the correct action is to escalate rather than force a remediation.",
+        "retryCount": 2
+      }
+    },
+    {
+      "seq": 30,
+      "type": "ESCALATION",
+      "agent": "Orchestrator",
+      "summary": "Escalated to a human: ESCALATE_TO_HUMAN",
+      "payload": {
+        "decisionType": "ESCALATE_TO_HUMAN"
+      }
+    }
+  ]
+}

@@ -1,0 +1,902 @@
+{
+  "incidentId": "INC-7b07fe04",
+  "service": "checkout-service",
+  "citedSources": [
+    "runbook-null-pointer.md",
+    "postmortem-2025-11-order-service-npe.md"
+  ],
+  "proposedFix": "",
+  "postmortem": "",
+  "confidence": 0.0,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "evidence": [
+    {
+      "id": "E1",
+      "type": "log",
+      "statement": "A java.lang.NullPointerException is reported at com.shop.checkout.CartService.applyPromo(CartService.java:88).",
+      "source": "incident_report",
+      "reportDerived": true
+    },
+    {
+      "id": "E2",
+      "type": "symptom",
+      "statement": "Customers report empty-cart errors in checkout-service.",
+      "source": "incident_report",
+      "reportDerived": true
+    },
+    {
+      "id": "E3",
+      "type": "log",
+      "statement": "No logs were found for service 'checkout-service' in the requested window.",
+      "source": "observability",
+      "reportDerived": false
+    },
+    {
+      "id": "E4",
+      "type": "metric",
+      "statement": "No metrics were found for service 'checkout-service' in the requested window.",
+      "source": "observability",
+      "reportDerived": false
+    }
+  ],
+  "hypotheses": [
+    {
+      "id": "H7",
+      "statement": "`CartService.applyPromo` likely dereferenced a value at line 88 that was assumed non-null for some checkout requests, causing the reported `NullPointerException`; those failed promo-application requests then surfaced to customers as the reported empty-cart checkout errors. The lack of service logs/metrics suggests the incident must currently be inferred from the incident reports rather than corroborated from normal observability.",
+      "confidence": 0.62,
+      "supportingEvidenceIds": [
+        "E1",
+        "E2",
+        "E3",
+        "E4"
+      ],
+      "supportingCitationIds": [
+        "C1",
+        "C2"
+      ]
+    },
+    {
+      "id": "H8",
+      "statement": "The customer-visible 'empty-cart' failures may be primarily due to faulty exception-to-user-error mapping in checkout-service: an NPE in `CartService.applyPromo` occurred, but the service or caller translated that internal failure into an empty-cart response instead of a generic checkout error. This competes with H1 by locating the main defect in error handling/symptom translation rather than in the origin of the null itself.",
+      "confidence": 0.34,
+      "supportingEvidenceIds": [
+        "E1",
+        "E2",
+        "E3",
+        "E4"
+      ],
+      "supportingCitationIds": [
+        "C1"
+      ]
+    }
+  ],
+  "critiques": [
+    {
+      "hypothesisId": "H7",
+      "status": "WEAK",
+      "reasons": [
+        "Per the evidence-quality rule, all available incident specifics are incident-report claims only: E1 and E2 are marked incident_report, while E3 and E4 contain no observability data. With no corroborating logs or metrics, this hypothesis cannot be SUPPORTED.",
+        "E1 does report a java.lang.NullPointerException at CartService.applyPromo line 88, which is consistent with a null dereference, and C1 says the top stack frame often identifies the failing file/line in an NPE. But that is still only consistency with the report, not independent observability corroboration.",
+        "H7's claim that failed promo application requests surfaced to customers as empty-cart errors is not specifically evidenced. E2 reports empty-cart errors, but nothing in E1-E4 shows the causal mapping from the NPE to that customer symptom.",
+        "The claimed support from E3 and E4 is weak: they only say no logs and no metrics were found, which cannot positively support the null-dereference mechanism; at most they support H7's narrower statement that the incident currently cannot be corroborated from normal observability.",
+        "C2 discusses a different service and scenario (order-service loyaltyTier nulls from legacy CRM). It provides a generic analogy about nullable external fields, but no evidence that checkout-service promo handling had the same data-flow or root cause here.",
+        "H7 does better than some alternatives at covering the reported symptom pair in E1 and E2, but it lacks discriminator evidence showing this mechanism specifically over competing explanations such as bad error translation or another bug at line 88. Under the discriminator rule, that prevents SUPPORTED."
+      ]
+    },
+    {
+      "hypothesisId": "H8",
+      "status": "WEAK",
+      "reasons": [
+        "Per the evidence-quality rule, the record is too thin for strong confirmation: E1 and E2 are incident-report items only, and E3/E4 provide no observability data. Therefore this hypothesis cannot be SUPPORTED.",
+        "E1 reports an NPE in CartService.applyPromo and E2 reports customer-visible empty-cart errors, so a translation/mapping issue is possible, but nothing in E1-E4 specifically shows that checkout-service converted an internal exception into an empty-cart response.",
+        "H8 claims support from C1, but C1 is about handling NullPointerExceptions and checking stack traces/deploy correlation; it does not support the specific theory that exception-to-user-error mapping is faulty.",
+        "E3 and E4 do not support H8's mechanism. Missing logs and metrics cannot corroborate that error handling, rather than the null origin itself, was the main defect.",
+        "H8 is non-discriminating against competing theories: the combination of E1 and E2 is equally consistent with a direct business-logic failure, an upstream caller mislabeling the error, or bad exception mapping. No evidence item supports H8 specifically over those alternatives.",
+        "H8 does cover the reported symptom in E2 by proposing how an internal NPE could appear as an empty-cart error, but that causal chain remains unverified by any observability evidence."
+      ]
+    }
+  ],
+  "decision": {
+    "type": "INSUFFICIENT_EVIDENCE",
+    "selectedHypothesisId": null,
+    "rationale": "Observability evidence is too thin to ground a recommendation. E1 and E2 are incident_report claims only, while E3 and E4 merely report absence of logs and metrics for checkout-service rather than providing substantive observability data. Under the evidence-quality gate, that requires INSUFFICIENT_EVIDENCE before considering hypothesis ranking. Although H7 and H8 both explain parts of the reported symptoms, the Critic rated both WEAK, not SUPPORTED, and retry count is 2 of 2, which further argues against forcing a conclusion from weak survivors. C1 and C2 do not overcome the lack of grounded service data, and H7/H8 cannot be recommended without corroborating observability that ties the reported NullPointerException in E1 to the customer symptom in E2.",
+    "proposedFix": null,
+    "postmortem": null
+  },
+  "trace": [
+    {
+      "seq": 1,
+      "type": "INCIDENT_RECEIVED",
+      "agent": "Orchestrator",
+      "summary": "Incident received for checkout-service",
+      "payload": {
+        "service": "checkout-service",
+        "stackTraceChars": 133,
+        "logChars": 69,
+        "metricChars": 72,
+        "timestamp": "2026-06-12T18:49:38.841124300Z"
+      }
+    },
+    {
+      "seq": 2,
+      "type": "REDACTION",
+      "agent": "Orchestrator",
+      "summary": "Secret redaction applied at the boundary (before any model sees the input)",
+      "payload": {
+        "stackTraceChanged": false,
+        "logsChanged": false,
+        "metricsChanged": false
+      }
+    },
+    {
+      "seq": 3,
+      "type": "AGENT_HANDOFF",
+      "agent": "Orchestrator",
+      "summary": "Orchestrator -> TriageAgent",
+      "payload": {
+        "agent": "TriageAgent"
+      }
+    },
+    {
+      "seq": 4,
+      "type": "EVIDENCE_EXTRACTED",
+      "agent": "TriageAgent",
+      "summary": "Extracted 4 evidence items (2 from the incident report)",
+      "payload": {
+        "count": 4,
+        "reportDerivedCount": 2,
+        "evidence": [
+          {
+            "id": "E1",
+            "type": "log",
+            "statement": "A java.lang.NullPointerException is reported at com.shop.checkout.CartService.applyPromo(CartService.java:88).",
+            "source": "incident_report",
+            "reportDerived": true
+          },
+          {
+            "id": "E2",
+            "type": "symptom",
+            "statement": "Customers report empty-cart errors in checkout-service.",
+            "source": "incident_report",
+            "reportDerived": true
+          },
+          {
+            "id": "E3",
+            "type": "log",
+            "statement": "No logs were found for service 'checkout-service' in the requested window.",
+            "source": "observability",
+            "reportDerived": false
+          },
+          {
+            "id": "E4",
+            "type": "metric",
+            "statement": "No metrics were found for service 'checkout-service' in the requested window.",
+            "source": "observability",
+            "reportDerived": false
+          }
+        ]
+      }
+    },
+    {
+      "seq": 5,
+      "type": "AGENT_HANDOFF",
+      "agent": "Orchestrator",
+      "summary": "Orchestrator -> KnowledgeAgent",
+      "payload": {
+        "agent": "KnowledgeAgent"
+      }
+    },
+    {
+      "seq": 6,
+      "type": "IQ_QUERY",
+      "agent": "KnowledgeAgent",
+      "summary": "Searching knowledge base: \"java.lang.NullPointerException CartService.applyPromo empty-cart checkout-service promo runbook postmortem\"",
+      "payload": {
+        "query": "java.lang.NullPointerException CartService.applyPromo empty-cart checkout-service promo runbook postmortem"
+      }
+    },
+    {
+      "seq": 7,
+      "type": "CITATIONS_RETRIEVED",
+      "agent": "KnowledgeAgent",
+      "summary": "Retrieved 2 cited snippets",
+      "payload": {
+        "count": 2,
+        "citationIds": [
+          "C1",
+          "C2"
+        ],
+        "sourceNames": [
+          "runbook-null-pointer.md",
+          "postmortem-2025-11-order-service-npe.md"
+        ]
+      }
+    },
+    {
+      "seq": 8,
+      "type": "AGENT_HANDOFF",
+      "agent": "Orchestrator",
+      "summary": "Orchestrator -> RootCauseAgent",
+      "payload": {
+        "agent": "RootCauseAgent"
+      }
+    },
+    {
+      "seq": 9,
+      "type": "HYPOTHESES_PROPOSED",
+      "agent": "RootCauseAgent",
+      "summary": "Proposed 3 competing hypotheses",
+      "payload": {
+        "count": 3,
+        "hypotheses": [
+          {
+            "id": "H1",
+            "statement": "`CartService.applyPromo` is dereferencing a nullable promo-related field from upstream customer/cart data, and for some requests that field is null, causing the NullPointerException at line 88 and surfacing to users as empty-cart checkout failures.",
+            "confidence": 0.71,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2"
+            ],
+            "supportingCitationIds": [
+              "C1",
+              "C2"
+            ]
+          },
+          {
+            "id": "H2",
+            "statement": "A recent checkout-service code change in promo handling introduced an assumption that a value used in `applyPromo` is always present; after the deploy, requests with missing promo inputs began throwing a NullPointerException at line 88, producing the reported checkout errors.",
+            "confidence": 0.58,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2"
+            ],
+            "supportingCitationIds": [
+              "C1"
+            ]
+          },
+          {
+            "id": "H3",
+            "statement": "The cart object or a cart subcomponent is unexpectedly null when promo application runs, so `applyPromo` is being invoked on an effectively empty or missing cart state; this would both trigger the NullPointerException at `CartService.java:88` and match customer reports of empty-cart errors.",
+            "confidence": 0.43,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2"
+            ],
+            "supportingCitationIds": [
+              "C1"
+            ]
+          }
+        ],
+        "afterRetry": 0
+      }
+    },
+    {
+      "seq": 10,
+      "type": "AGENT_HANDOFF",
+      "agent": "Orchestrator",
+      "summary": "Orchestrator -> CriticAgent",
+      "payload": {
+        "agent": "CriticAgent"
+      }
+    },
+    {
+      "seq": 11,
+      "type": "CRITIQUE",
+      "agent": "CriticAgent",
+      "summary": "Critiqued 3 hypotheses: H1=WEAK, H2=WEAK, H3=WEAK",
+      "payload": {
+        "critiques": [
+          {
+            "hypothesisId": "H1",
+            "status": "WEAK",
+            "reasons": [
+              "E1 is only an incident_report claim of a NullPointerException at CartService.applyPromo line 88; with E3 and E4 showing no checkout-service logs or metrics in the window, there is no observability corroboration, so this cannot be stronger than WEAK under the evidence-quality rule.",
+              "E1 does not identify which value was null at line 88, so it does not specifically support the claim that a promo-related field from upstream customer/cart data was dereferenced; many other nulls inside applyPromo are equally consistent with E1.",
+              "C1 and C2 describe a common nullable-upstream-data failure pattern, but they are generic prior knowledge, not evidence that this incident involved promo-related upstream data specifically; they do not discriminate H1 from other NPE explanations.",
+              "E2 reports empty-cart checkout failures, but H1 does not have direct evidence connecting the reported empty-cart symptom to a nullable promo field rather than some other failure path; the claimed support from E2 is therefore weak."
+            ]
+          },
+          {
+            "hypothesisId": "H2",
+            "status": "WEAK",
+            "reasons": [
+              "E1 only reports an NPE at CartService.applyPromo line 88, and E3/E4 show there are no logs or metrics for checkout-service in the requested window; without observability data, the theory of a recent code change is unverified and cannot be stronger than WEAK.",
+              "Neither E1 nor E2 contains any deploy timing, release, or change information, so the claim that a recent code change introduced the bug is unsupported by the cited evidence.",
+              "C1 says to correlate error-rate spike timing with the most recent deploy and only then suspect the deploy, but E4 shows no metrics were found, so the runbook's condition for suspecting a deploy was not satisfied here.",
+              "The hypothesis's claimed support from E1 and E2 is overstated: those items may fit an NPE in promo handling, but they do not specifically support 'after the deploy' or 'introduced by a recent checkout-service code change' over competing causes."
+            ]
+          },
+          {
+            "hypothesisId": "H3",
+            "status": "WEAK",
+            "reasons": [
+              "E1 reports an NPE inside CartService.applyPromo at line 88, but it does not show that the cart object or a cart subcomponent was null; the null could be any local, argument, or field used there, so the proposed mechanism is not specifically supported.",
+              "E2's empty-cart symptom is only an incident_report claim, and with E3/E4 showing no logs or metrics for checkout-service, there is no observability evidence tying that symptom to a null cart state; under the evidence-quality rule this remains WEAK.",
+              "C1 supports only the broad idea that some null was dereferenced in a request path; it does not point to a null cart or missing cart state specifically, so it does not discriminate H3 from other NPE hypotheses.",
+              "The hypothesis claims support from E1 and E2, but those items do not establish that applyPromo was running on an 'effectively empty or missing cart state' rather than failing on some other nullable value within promo logic."
+            ]
+          }
+        ],
+        "supportedCount": 0
+      }
+    },
+    {
+      "seq": 12,
+      "type": "HYPOTHESIS_DISCARDED",
+      "agent": "CriticAgent",
+      "summary": "Discarded H1 (WEAK) at retry 1/2 — E1 is only an incident_report claim of a NullPointerException at CartService.applyPromo line 88; with E3 and E4 showing no checkout-service logs or metrics in the window, there is no observability corroboration, so this cannot be stronger than WEAK under the evidence-quality rule.",
+      "payload": {
+        "retryNumber": 1,
+        "maxRetries": 2,
+        "discarded": {
+          "hypothesis": {
+            "id": "H1",
+            "statement": "`CartService.applyPromo` is dereferencing a nullable promo-related field from upstream customer/cart data, and for some requests that field is null, causing the NullPointerException at line 88 and surfacing to users as empty-cart checkout failures.",
+            "confidence": 0.71,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2"
+            ],
+            "supportingCitationIds": [
+              "C1",
+              "C2"
+            ]
+          },
+          "status": "WEAK",
+          "reasons": [
+            "E1 is only an incident_report claim of a NullPointerException at CartService.applyPromo line 88; with E3 and E4 showing no checkout-service logs or metrics in the window, there is no observability corroboration, so this cannot be stronger than WEAK under the evidence-quality rule.",
+            "E1 does not identify which value was null at line 88, so it does not specifically support the claim that a promo-related field from upstream customer/cart data was dereferenced; many other nulls inside applyPromo are equally consistent with E1.",
+            "C1 and C2 describe a common nullable-upstream-data failure pattern, but they are generic prior knowledge, not evidence that this incident involved promo-related upstream data specifically; they do not discriminate H1 from other NPE explanations.",
+            "E2 reports empty-cart checkout failures, but H1 does not have direct evidence connecting the reported empty-cart symptom to a nullable promo field rather than some other failure path; the claimed support from E2 is therefore weak."
+          ]
+        }
+      }
+    },
+    {
+      "seq": 13,
+      "type": "HYPOTHESIS_DISCARDED",
+      "agent": "CriticAgent",
+      "summary": "Discarded H2 (WEAK) at retry 1/2 — E1 only reports an NPE at CartService.applyPromo line 88, and E3/E4 show there are no logs or metrics for checkout-service in the requested window; without observability data, the theory of a recent code change is unverified and cannot be stronger than WEAK.",
+      "payload": {
+        "retryNumber": 1,
+        "maxRetries": 2,
+        "discarded": {
+          "hypothesis": {
+            "id": "H2",
+            "statement": "A recent checkout-service code change in promo handling introduced an assumption that a value used in `applyPromo` is always present; after the deploy, requests with missing promo inputs began throwing a NullPointerException at line 88, producing the reported checkout errors.",
+            "confidence": 0.58,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2"
+            ],
+            "supportingCitationIds": [
+              "C1"
+            ]
+          },
+          "status": "WEAK",
+          "reasons": [
+            "E1 only reports an NPE at CartService.applyPromo line 88, and E3/E4 show there are no logs or metrics for checkout-service in the requested window; without observability data, the theory of a recent code change is unverified and cannot be stronger than WEAK.",
+            "Neither E1 nor E2 contains any deploy timing, release, or change information, so the claim that a recent code change introduced the bug is unsupported by the cited evidence.",
+            "C1 says to correlate error-rate spike timing with the most recent deploy and only then suspect the deploy, but E4 shows no metrics were found, so the runbook's condition for suspecting a deploy was not satisfied here.",
+            "The hypothesis's claimed support from E1 and E2 is overstated: those items may fit an NPE in promo handling, but they do not specifically support 'after the deploy' or 'introduced by a recent checkout-service code change' over competing causes."
+          ]
+        }
+      }
+    },
+    {
+      "seq": 14,
+      "type": "HYPOTHESIS_DISCARDED",
+      "agent": "CriticAgent",
+      "summary": "Discarded H3 (WEAK) at retry 1/2 — E1 reports an NPE inside CartService.applyPromo at line 88, but it does not show that the cart object or a cart subcomponent was null; the null could be any local, argument, or field used there, so the proposed mechanism is not specifically supported.",
+      "payload": {
+        "retryNumber": 1,
+        "maxRetries": 2,
+        "discarded": {
+          "hypothesis": {
+            "id": "H3",
+            "statement": "The cart object or a cart subcomponent is unexpectedly null when promo application runs, so `applyPromo` is being invoked on an effectively empty or missing cart state; this would both trigger the NullPointerException at `CartService.java:88` and match customer reports of empty-cart errors.",
+            "confidence": 0.43,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2"
+            ],
+            "supportingCitationIds": [
+              "C1"
+            ]
+          },
+          "status": "WEAK",
+          "reasons": [
+            "E1 reports an NPE inside CartService.applyPromo at line 88, but it does not show that the cart object or a cart subcomponent was null; the null could be any local, argument, or field used there, so the proposed mechanism is not specifically supported.",
+            "E2's empty-cart symptom is only an incident_report claim, and with E3/E4 showing no logs or metrics for checkout-service, there is no observability evidence tying that symptom to a null cart state; under the evidence-quality rule this remains WEAK.",
+            "C1 supports only the broad idea that some null was dereferenced in a request path; it does not point to a null cart or missing cart state specifically, so it does not discriminate H3 from other NPE hypotheses.",
+            "The hypothesis claims support from E1 and E2, but those items do not establish that applyPromo was running on an 'effectively empty or missing cart state' rather than failing on some other nullable value within promo logic."
+          ]
+        }
+      }
+    },
+    {
+      "seq": 15,
+      "type": "RETRY_TRIGGERED",
+      "agent": "Orchestrator",
+      "summary": "Retry 1/2 — no SUPPORTED hypothesis; sending 3 back to RootCauseAgent for re-thinking",
+      "payload": {
+        "retryNumber": 1,
+        "maxRetries": 2,
+        "rejectedHypotheses": [
+          {
+            "hypothesis": {
+              "id": "H1",
+              "statement": "`CartService.applyPromo` is dereferencing a nullable promo-related field from upstream customer/cart data, and for some requests that field is null, causing the NullPointerException at line 88 and surfacing to users as empty-cart checkout failures.",
+              "confidence": 0.71,
+              "supportingEvidenceIds": [
+                "E1",
+                "E2"
+              ],
+              "supportingCitationIds": [
+                "C1",
+                "C2"
+              ]
+            },
+            "status": "WEAK",
+            "reasons": [
+              "E1 is only an incident_report claim of a NullPointerException at CartService.applyPromo line 88; with E3 and E4 showing no checkout-service logs or metrics in the window, there is no observability corroboration, so this cannot be stronger than WEAK under the evidence-quality rule.",
+              "E1 does not identify which value was null at line 88, so it does not specifically support the claim that a promo-related field from upstream customer/cart data was dereferenced; many other nulls inside applyPromo are equally consistent with E1.",
+              "C1 and C2 describe a common nullable-upstream-data failure pattern, but they are generic prior knowledge, not evidence that this incident involved promo-related upstream data specifically; they do not discriminate H1 from other NPE explanations.",
+              "E2 reports empty-cart checkout failures, but H1 does not have direct evidence connecting the reported empty-cart symptom to a nullable promo field rather than some other failure path; the claimed support from E2 is therefore weak."
+            ]
+          },
+          {
+            "hypothesis": {
+              "id": "H2",
+              "statement": "A recent checkout-service code change in promo handling introduced an assumption that a value used in `applyPromo` is always present; after the deploy, requests with missing promo inputs began throwing a NullPointerException at line 88, producing the reported checkout errors.",
+              "confidence": 0.58,
+              "supportingEvidenceIds": [
+                "E1",
+                "E2"
+              ],
+              "supportingCitationIds": [
+                "C1"
+              ]
+            },
+            "status": "WEAK",
+            "reasons": [
+              "E1 only reports an NPE at CartService.applyPromo line 88, and E3/E4 show there are no logs or metrics for checkout-service in the requested window; without observability data, the theory of a recent code change is unverified and cannot be stronger than WEAK.",
+              "Neither E1 nor E2 contains any deploy timing, release, or change information, so the claim that a recent code change introduced the bug is unsupported by the cited evidence.",
+              "C1 says to correlate error-rate spike timing with the most recent deploy and only then suspect the deploy, but E4 shows no metrics were found, so the runbook's condition for suspecting a deploy was not satisfied here.",
+              "The hypothesis's claimed support from E1 and E2 is overstated: those items may fit an NPE in promo handling, but they do not specifically support 'after the deploy' or 'introduced by a recent checkout-service code change' over competing causes."
+            ]
+          },
+          {
+            "hypothesis": {
+              "id": "H3",
+              "statement": "The cart object or a cart subcomponent is unexpectedly null when promo application runs, so `applyPromo` is being invoked on an effectively empty or missing cart state; this would both trigger the NullPointerException at `CartService.java:88` and match customer reports of empty-cart errors.",
+              "confidence": 0.43,
+              "supportingEvidenceIds": [
+                "E1",
+                "E2"
+              ],
+              "supportingCitationIds": [
+                "C1"
+              ]
+            },
+            "status": "WEAK",
+            "reasons": [
+              "E1 reports an NPE inside CartService.applyPromo at line 88, but it does not show that the cart object or a cart subcomponent was null; the null could be any local, argument, or field used there, so the proposed mechanism is not specifically supported.",
+              "E2's empty-cart symptom is only an incident_report claim, and with E3/E4 showing no logs or metrics for checkout-service, there is no observability evidence tying that symptom to a null cart state; under the evidence-quality rule this remains WEAK.",
+              "C1 supports only the broad idea that some null was dereferenced in a request path; it does not point to a null cart or missing cart state specifically, so it does not discriminate H3 from other NPE hypotheses.",
+              "The hypothesis claims support from E1 and E2, but those items do not establish that applyPromo was running on an 'effectively empty or missing cart state' rather than failing on some other nullable value within promo logic."
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "seq": 16,
+      "type": "AGENT_HANDOFF",
+      "agent": "Orchestrator",
+      "summary": "Orchestrator -> RootCauseAgent",
+      "payload": {
+        "agent": "RootCauseAgent"
+      }
+    },
+    {
+      "seq": 17,
+      "type": "HYPOTHESES_PROPOSED",
+      "agent": "RootCauseAgent",
+      "summary": "Proposed 3 competing hypotheses (re-think after rejection)",
+      "payload": {
+        "count": 3,
+        "hypotheses": [
+          {
+            "id": "H4",
+            "statement": "`CartService.applyPromo` likely dereferenced a nullable promotion-domain object at line 88—such as a promo rule, discount result, or promo metadata returned as absent for some requests—causing the reported NullPointerException and surfacing to customers as checkout empty-cart errors. This differs from a null cart or customer field: the null is in promo evaluation data used inside `applyPromo` itself.",
+            "confidence": 0.36,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2"
+            ],
+            "supportingCitationIds": [
+              "C1"
+            ]
+          },
+          {
+            "id": "H5",
+            "statement": "A null value coming from an external or legacy promotions-related input path likely reached `applyPromo` without normalization/defaulting, and line 88 assumed it was present; requests hitting that missing field then threw the reported NPE and manifested as the reported empty-cart checkout failures. This differs from an internal promo object bug by placing the source of nullness at a boundary/integration input.",
+            "confidence": 0.33,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2"
+            ],
+            "supportingCitationIds": [
+              "C1",
+              "C2"
+            ]
+          },
+          {
+            "id": "H6",
+            "statement": "`applyPromo` likely contains a local null-handling defect at line 88—such as invoking a method on an optional request parameter or intermediate value that is conditionally unset for some checkout paths—producing the reported NullPointerException and resulting user-visible empty-cart errors. This differs from boundary-data hypotheses by locating the bug in intra-method control flow rather than upstream data quality.",
+            "confidence": 0.27,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2"
+            ],
+            "supportingCitationIds": [
+              "C1"
+            ]
+          }
+        ],
+        "afterRetry": 1
+      }
+    },
+    {
+      "seq": 18,
+      "type": "AGENT_HANDOFF",
+      "agent": "Orchestrator",
+      "summary": "Orchestrator -> CriticAgent",
+      "payload": {
+        "agent": "CriticAgent"
+      }
+    },
+    {
+      "seq": 19,
+      "type": "CRITIQUE",
+      "agent": "CriticAgent",
+      "summary": "Critiqued 3 hypotheses: H4=WEAK, H5=WEAK, H6=WEAK",
+      "payload": {
+        "critiques": [
+          {
+            "hypothesisId": "H4",
+            "status": "WEAK",
+            "reasons": [
+              "E1 and E2 are incident_report items only; E3 and E4 show there are no checkout-service logs or metrics in the window, so there is no observability corroboration for any specific root-cause theory. Under the evidence-quality rule, this cannot be SUPPORTED.",
+              "E1 reports only that a NullPointerException occurred at CartService.applyPromo line 88; it does not identify the null object as a promotion-domain object such as promo rule, discount result, or promo metadata. The hypothesis's claimed support from E1 is therefore thinner than stated.",
+              "C1 says the top stack frame names the exact file and line and that a common cause is some assumed-non-null field being null, often from external/legacy data, but it does not specifically favor a promo-domain null over other possibilities like cart/customer/request/intermediate values inside applyPromo. By the discriminator rule, C1 does not support H4 specifically over H5 or H6.",
+              "E2 reports empty-cart errors, but H4 does not explain why a promo-evaluation null would surface specifically as an empty-cart symptom rather than some other checkout failure; with only E2 and no service logs/metrics from E3/E4, the symptom mapping remains unverified."
+            ]
+          },
+          {
+            "hypothesisId": "H5",
+            "status": "WEAK",
+            "reasons": [
+              "E1 and E2 are incident_report items only, while E3 and E4 show no logs or metrics were found for checkout-service in the requested window. With no observability data corroborating an upstream/boundary-data issue, this hypothesis cannot be SUPPORTED under the evidence-quality rule.",
+              "E1 reports an NPE at CartService.applyPromo line 88, but it does not show that the null originated from an external or legacy promotions-related input path. The hypothesis's claimed support from E1 and E2 does not establish the boundary/integration source it asserts.",
+              "C1 and C2 describe external/legacy nulls as a common pattern, but both are generic/analogous knowledge rather than evidence about this incident. C2 is a postmortem for order-service loyaltyTier, not checkout-service promotions, so it does not positively corroborate that the same mechanism happened here.",
+              "By the discriminator rule, C1/C2 do not distinguish H5 from H4 or H6: the reported NPE in E1 is equally consistent with an internal promo object bug or an intra-method null-handling defect. There is no evidence item that specifically prefers a boundary-data source.",
+              "E2 reports empty-cart checkout failures, but neither E1 nor any observability item links those customer-visible errors to external/legacy promotions input specifically; E3/E4 leave that connection unverified."
+            ]
+          },
+          {
+            "hypothesisId": "H6",
+            "status": "WEAK",
+            "reasons": [
+              "E1 and E2 are only incident_report claims, and E3/E4 provide no logs or metrics for checkout-service. Without observability corroboration, this hypothesis cannot be SUPPORTED under the evidence-quality rule.",
+              "E1 confirms only that applyPromo at line 88 threw a NullPointerException; it does not show the null came from a local control-flow/intermediate-value defect as opposed to upstream data or a promo-domain object. The hypothesis's claimed support from E1 is therefore non-specific.",
+              "C1 says an assumed non-null field may be null and recommends reading the stack frame and correlating with deploy/error-rate, but E3/E4 provide neither logs nor metrics to perform those checks here. C1 does not specifically support an intra-method control-flow bug over the competing upstream-data hypotheses.",
+              "E2 reports empty-cart errors, but H6 does not explain, with evidence, how a local null-handling defect in applyPromo yields that exact reported symptom; given E3/E4, the symptom linkage is unverified rather than supported.",
+              "By the discriminator rule, the facts cited for H6 are equally consistent with H4 and H5. No evidence item specifically favors a local intermediate-value defect over a null from promo data or external input."
+            ]
+          }
+        ],
+        "supportedCount": 0
+      }
+    },
+    {
+      "seq": 20,
+      "type": "HYPOTHESIS_DISCARDED",
+      "agent": "CriticAgent",
+      "summary": "Discarded H4 (WEAK) at retry 2/2 — E1 and E2 are incident_report items only; E3 and E4 show there are no checkout-service logs or metrics in the window, so there is no observability corroboration for any specific root-cause theory. Under the evidence-quality rule, this cannot be SUPPORTED.",
+      "payload": {
+        "retryNumber": 2,
+        "maxRetries": 2,
+        "discarded": {
+          "hypothesis": {
+            "id": "H4",
+            "statement": "`CartService.applyPromo` likely dereferenced a nullable promotion-domain object at line 88—such as a promo rule, discount result, or promo metadata returned as absent for some requests—causing the reported NullPointerException and surfacing to customers as checkout empty-cart errors. This differs from a null cart or customer field: the null is in promo evaluation data used inside `applyPromo` itself.",
+            "confidence": 0.36,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2"
+            ],
+            "supportingCitationIds": [
+              "C1"
+            ]
+          },
+          "status": "WEAK",
+          "reasons": [
+            "E1 and E2 are incident_report items only; E3 and E4 show there are no checkout-service logs or metrics in the window, so there is no observability corroboration for any specific root-cause theory. Under the evidence-quality rule, this cannot be SUPPORTED.",
+            "E1 reports only that a NullPointerException occurred at CartService.applyPromo line 88; it does not identify the null object as a promotion-domain object such as promo rule, discount result, or promo metadata. The hypothesis's claimed support from E1 is therefore thinner than stated.",
+            "C1 says the top stack frame names the exact file and line and that a common cause is some assumed-non-null field being null, often from external/legacy data, but it does not specifically favor a promo-domain null over other possibilities like cart/customer/request/intermediate values inside applyPromo. By the discriminator rule, C1 does not support H4 specifically over H5 or H6.",
+            "E2 reports empty-cart errors, but H4 does not explain why a promo-evaluation null would surface specifically as an empty-cart symptom rather than some other checkout failure; with only E2 and no service logs/metrics from E3/E4, the symptom mapping remains unverified."
+          ]
+        }
+      }
+    },
+    {
+      "seq": 21,
+      "type": "HYPOTHESIS_DISCARDED",
+      "agent": "CriticAgent",
+      "summary": "Discarded H5 (WEAK) at retry 2/2 — E1 and E2 are incident_report items only, while E3 and E4 show no logs or metrics were found for checkout-service in the requested window. With no observability data corroborating an upstream/boundary-data issue, this hypothesis cannot be SUPPORTED under the evidence-quality rule.",
+      "payload": {
+        "retryNumber": 2,
+        "maxRetries": 2,
+        "discarded": {
+          "hypothesis": {
+            "id": "H5",
+            "statement": "A null value coming from an external or legacy promotions-related input path likely reached `applyPromo` without normalization/defaulting, and line 88 assumed it was present; requests hitting that missing field then threw the reported NPE and manifested as the reported empty-cart checkout failures. This differs from an internal promo object bug by placing the source of nullness at a boundary/integration input.",
+            "confidence": 0.33,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2"
+            ],
+            "supportingCitationIds": [
+              "C1",
+              "C2"
+            ]
+          },
+          "status": "WEAK",
+          "reasons": [
+            "E1 and E2 are incident_report items only, while E3 and E4 show no logs or metrics were found for checkout-service in the requested window. With no observability data corroborating an upstream/boundary-data issue, this hypothesis cannot be SUPPORTED under the evidence-quality rule.",
+            "E1 reports an NPE at CartService.applyPromo line 88, but it does not show that the null originated from an external or legacy promotions-related input path. The hypothesis's claimed support from E1 and E2 does not establish the boundary/integration source it asserts.",
+            "C1 and C2 describe external/legacy nulls as a common pattern, but both are generic/analogous knowledge rather than evidence about this incident. C2 is a postmortem for order-service loyaltyTier, not checkout-service promotions, so it does not positively corroborate that the same mechanism happened here.",
+            "By the discriminator rule, C1/C2 do not distinguish H5 from H4 or H6: the reported NPE in E1 is equally consistent with an internal promo object bug or an intra-method null-handling defect. There is no evidence item that specifically prefers a boundary-data source.",
+            "E2 reports empty-cart checkout failures, but neither E1 nor any observability item links those customer-visible errors to external/legacy promotions input specifically; E3/E4 leave that connection unverified."
+          ]
+        }
+      }
+    },
+    {
+      "seq": 22,
+      "type": "HYPOTHESIS_DISCARDED",
+      "agent": "CriticAgent",
+      "summary": "Discarded H6 (WEAK) at retry 2/2 — E1 and E2 are only incident_report claims, and E3/E4 provide no logs or metrics for checkout-service. Without observability corroboration, this hypothesis cannot be SUPPORTED under the evidence-quality rule.",
+      "payload": {
+        "retryNumber": 2,
+        "maxRetries": 2,
+        "discarded": {
+          "hypothesis": {
+            "id": "H6",
+            "statement": "`applyPromo` likely contains a local null-handling defect at line 88—such as invoking a method on an optional request parameter or intermediate value that is conditionally unset for some checkout paths—producing the reported NullPointerException and resulting user-visible empty-cart errors. This differs from boundary-data hypotheses by locating the bug in intra-method control flow rather than upstream data quality.",
+            "confidence": 0.27,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2"
+            ],
+            "supportingCitationIds": [
+              "C1"
+            ]
+          },
+          "status": "WEAK",
+          "reasons": [
+            "E1 and E2 are only incident_report claims, and E3/E4 provide no logs or metrics for checkout-service. Without observability corroboration, this hypothesis cannot be SUPPORTED under the evidence-quality rule.",
+            "E1 confirms only that applyPromo at line 88 threw a NullPointerException; it does not show the null came from a local control-flow/intermediate-value defect as opposed to upstream data or a promo-domain object. The hypothesis's claimed support from E1 is therefore non-specific.",
+            "C1 says an assumed non-null field may be null and recommends reading the stack frame and correlating with deploy/error-rate, but E3/E4 provide neither logs nor metrics to perform those checks here. C1 does not specifically support an intra-method control-flow bug over the competing upstream-data hypotheses.",
+            "E2 reports empty-cart errors, but H6 does not explain, with evidence, how a local null-handling defect in applyPromo yields that exact reported symptom; given E3/E4, the symptom linkage is unverified rather than supported.",
+            "By the discriminator rule, the facts cited for H6 are equally consistent with H4 and H5. No evidence item specifically favors a local intermediate-value defect over a null from promo data or external input."
+          ]
+        }
+      }
+    },
+    {
+      "seq": 23,
+      "type": "RETRY_TRIGGERED",
+      "agent": "Orchestrator",
+      "summary": "Retry 2/2 — no SUPPORTED hypothesis; sending 3 back to RootCauseAgent for re-thinking",
+      "payload": {
+        "retryNumber": 2,
+        "maxRetries": 2,
+        "rejectedHypotheses": [
+          {
+            "hypothesis": {
+              "id": "H4",
+              "statement": "`CartService.applyPromo` likely dereferenced a nullable promotion-domain object at line 88—such as a promo rule, discount result, or promo metadata returned as absent for some requests—causing the reported NullPointerException and surfacing to customers as checkout empty-cart errors. This differs from a null cart or customer field: the null is in promo evaluation data used inside `applyPromo` itself.",
+              "confidence": 0.36,
+              "supportingEvidenceIds": [
+                "E1",
+                "E2"
+              ],
+              "supportingCitationIds": [
+                "C1"
+              ]
+            },
+            "status": "WEAK",
+            "reasons": [
+              "E1 and E2 are incident_report items only; E3 and E4 show there are no checkout-service logs or metrics in the window, so there is no observability corroboration for any specific root-cause theory. Under the evidence-quality rule, this cannot be SUPPORTED.",
+              "E1 reports only that a NullPointerException occurred at CartService.applyPromo line 88; it does not identify the null object as a promotion-domain object such as promo rule, discount result, or promo metadata. The hypothesis's claimed support from E1 is therefore thinner than stated.",
+              "C1 says the top stack frame names the exact file and line and that a common cause is some assumed-non-null field being null, often from external/legacy data, but it does not specifically favor a promo-domain null over other possibilities like cart/customer/request/intermediate values inside applyPromo. By the discriminator rule, C1 does not support H4 specifically over H5 or H6.",
+              "E2 reports empty-cart errors, but H4 does not explain why a promo-evaluation null would surface specifically as an empty-cart symptom rather than some other checkout failure; with only E2 and no service logs/metrics from E3/E4, the symptom mapping remains unverified."
+            ]
+          },
+          {
+            "hypothesis": {
+              "id": "H5",
+              "statement": "A null value coming from an external or legacy promotions-related input path likely reached `applyPromo` without normalization/defaulting, and line 88 assumed it was present; requests hitting that missing field then threw the reported NPE and manifested as the reported empty-cart checkout failures. This differs from an internal promo object bug by placing the source of nullness at a boundary/integration input.",
+              "confidence": 0.33,
+              "supportingEvidenceIds": [
+                "E1",
+                "E2"
+              ],
+              "supportingCitationIds": [
+                "C1",
+                "C2"
+              ]
+            },
+            "status": "WEAK",
+            "reasons": [
+              "E1 and E2 are incident_report items only, while E3 and E4 show no logs or metrics were found for checkout-service in the requested window. With no observability data corroborating an upstream/boundary-data issue, this hypothesis cannot be SUPPORTED under the evidence-quality rule.",
+              "E1 reports an NPE at CartService.applyPromo line 88, but it does not show that the null originated from an external or legacy promotions-related input path. The hypothesis's claimed support from E1 and E2 does not establish the boundary/integration source it asserts.",
+              "C1 and C2 describe external/legacy nulls as a common pattern, but both are generic/analogous knowledge rather than evidence about this incident. C2 is a postmortem for order-service loyaltyTier, not checkout-service promotions, so it does not positively corroborate that the same mechanism happened here.",
+              "By the discriminator rule, C1/C2 do not distinguish H5 from H4 or H6: the reported NPE in E1 is equally consistent with an internal promo object bug or an intra-method null-handling defect. There is no evidence item that specifically prefers a boundary-data source.",
+              "E2 reports empty-cart checkout failures, but neither E1 nor any observability item links those customer-visible errors to external/legacy promotions input specifically; E3/E4 leave that connection unverified."
+            ]
+          },
+          {
+            "hypothesis": {
+              "id": "H6",
+              "statement": "`applyPromo` likely contains a local null-handling defect at line 88—such as invoking a method on an optional request parameter or intermediate value that is conditionally unset for some checkout paths—producing the reported NullPointerException and resulting user-visible empty-cart errors. This differs from boundary-data hypotheses by locating the bug in intra-method control flow rather than upstream data quality.",
+              "confidence": 0.27,
+              "supportingEvidenceIds": [
+                "E1",
+                "E2"
+              ],
+              "supportingCitationIds": [
+                "C1"
+              ]
+            },
+            "status": "WEAK",
+            "reasons": [
+              "E1 and E2 are only incident_report claims, and E3/E4 provide no logs or metrics for checkout-service. Without observability corroboration, this hypothesis cannot be SUPPORTED under the evidence-quality rule.",
+              "E1 confirms only that applyPromo at line 88 threw a NullPointerException; it does not show the null came from a local control-flow/intermediate-value defect as opposed to upstream data or a promo-domain object. The hypothesis's claimed support from E1 is therefore non-specific.",
+              "C1 says an assumed non-null field may be null and recommends reading the stack frame and correlating with deploy/error-rate, but E3/E4 provide neither logs nor metrics to perform those checks here. C1 does not specifically support an intra-method control-flow bug over the competing upstream-data hypotheses.",
+              "E2 reports empty-cart errors, but H6 does not explain, with evidence, how a local null-handling defect in applyPromo yields that exact reported symptom; given E3/E4, the symptom linkage is unverified rather than supported.",
+              "By the discriminator rule, the facts cited for H6 are equally consistent with H4 and H5. No evidence item specifically favors a local intermediate-value defect over a null from promo data or external input."
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "seq": 24,
+      "type": "AGENT_HANDOFF",
+      "agent": "Orchestrator",
+      "summary": "Orchestrator -> RootCauseAgent",
+      "payload": {
+        "agent": "RootCauseAgent"
+      }
+    },
+    {
+      "seq": 25,
+      "type": "HYPOTHESES_PROPOSED",
+      "agent": "RootCauseAgent",
+      "summary": "Proposed 2 competing hypotheses (re-think after rejection)",
+      "payload": {
+        "count": 2,
+        "hypotheses": [
+          {
+            "id": "H7",
+            "statement": "`CartService.applyPromo` likely dereferenced a value at line 88 that was assumed non-null for some checkout requests, causing the reported `NullPointerException`; those failed promo-application requests then surfaced to customers as the reported empty-cart checkout errors. The lack of service logs/metrics suggests the incident must currently be inferred from the incident reports rather than corroborated from normal observability.",
+            "confidence": 0.62,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2",
+              "E3",
+              "E4"
+            ],
+            "supportingCitationIds": [
+              "C1",
+              "C2"
+            ]
+          },
+          {
+            "id": "H8",
+            "statement": "The customer-visible 'empty-cart' failures may be primarily due to faulty exception-to-user-error mapping in checkout-service: an NPE in `CartService.applyPromo` occurred, but the service or caller translated that internal failure into an empty-cart response instead of a generic checkout error. This competes with H1 by locating the main defect in error handling/symptom translation rather than in the origin of the null itself.",
+            "confidence": 0.34,
+            "supportingEvidenceIds": [
+              "E1",
+              "E2",
+              "E3",
+              "E4"
+            ],
+            "supportingCitationIds": [
+              "C1"
+            ]
+          }
+        ],
+        "afterRetry": 2
+      }
+    },
+    {
+      "seq": 26,
+      "type": "AGENT_HANDOFF",
+      "agent": "Orchestrator",
+      "summary": "Orchestrator -> CriticAgent",
+      "payload": {
+        "agent": "CriticAgent"
+      }
+    },
+    {
+      "seq": 27,
+      "type": "CRITIQUE",
+      "agent": "CriticAgent",
+      "summary": "Critiqued 2 hypotheses: H7=WEAK, H8=WEAK",
+      "payload": {
+        "critiques": [
+          {
+            "hypothesisId": "H7",
+            "status": "WEAK",
+            "reasons": [
+              "Per the evidence-quality rule, all available incident specifics are incident-report claims only: E1 and E2 are marked incident_report, while E3 and E4 contain no observability data. With no corroborating logs or metrics, this hypothesis cannot be SUPPORTED.",
+              "E1 does report a java.lang.NullPointerException at CartService.applyPromo line 88, which is consistent with a null dereference, and C1 says the top stack frame often identifies the failing file/line in an NPE. But that is still only consistency with the report, not independent observability corroboration.",
+              "H7's claim that failed promo application requests surfaced to customers as empty-cart errors is not specifically evidenced. E2 reports empty-cart errors, but nothing in E1-E4 shows the causal mapping from the NPE to that customer symptom.",
+              "The claimed support from E3 and E4 is weak: they only say no logs and no metrics were found, which cannot positively support the null-dereference mechanism; at most they support H7's narrower statement that the incident currently cannot be corroborated from normal observability.",
+              "C2 discusses a different service and scenario (order-service loyaltyTier nulls from legacy CRM). It provides a generic analogy about nullable external fields, but no evidence that checkout-service promo handling had the same data-flow or root cause here.",
+              "H7 does better than some alternatives at covering the reported symptom pair in E1 and E2, but it lacks discriminator evidence showing this mechanism specifically over competing explanations such as bad error translation or another bug at line 88. Under the discriminator rule, that prevents SUPPORTED."
+            ]
+          },
+          {
+            "hypothesisId": "H8",
+            "status": "WEAK",
+            "reasons": [
+              "Per the evidence-quality rule, the record is too thin for strong confirmation: E1 and E2 are incident-report items only, and E3/E4 provide no observability data. Therefore this hypothesis cannot be SUPPORTED.",
+              "E1 reports an NPE in CartService.applyPromo and E2 reports customer-visible empty-cart errors, so a translation/mapping issue is possible, but nothing in E1-E4 specifically shows that checkout-service converted an internal exception into an empty-cart response.",
+              "H8 claims support from C1, but C1 is about handling NullPointerExceptions and checking stack traces/deploy correlation; it does not support the specific theory that exception-to-user-error mapping is faulty.",
+              "E3 and E4 do not support H8's mechanism. Missing logs and metrics cannot corroborate that error handling, rather than the null origin itself, was the main defect.",
+              "H8 is non-discriminating against competing theories: the combination of E1 and E2 is equally consistent with a direct business-logic failure, an upstream caller mislabeling the error, or bad exception mapping. No evidence item supports H8 specifically over those alternatives.",
+              "H8 does cover the reported symptom in E2 by proposing how an internal NPE could appear as an empty-cart error, but that causal chain remains unverified by any observability evidence."
+            ]
+          }
+        ],
+        "supportedCount": 0
+      }
+    },
+    {
+      "seq": 28,
+      "type": "AGENT_HANDOFF",
+      "agent": "Orchestrator",
+      "summary": "Orchestrator -> JudgeAgent",
+      "payload": {
+        "agent": "JudgeAgent"
+      }
+    },
+    {
+      "seq": 29,
+      "type": "DECISION",
+      "agent": "JudgeAgent",
+      "summary": "Decision: INSUFFICIENT_EVIDENCE",
+      "payload": {
+        "type": "INSUFFICIENT_EVIDENCE",
+        "selectedHypothesisId": null,
+        "rationale": "Observability evidence is too thin to ground a recommendation. E1 and E2 are incident_report claims only, while E3 and E4 merely report absence of logs and metrics for checkout-service rather than providing substantive observability data. Under the evidence-quality gate, that requires INSUFFICIENT_EVIDENCE before considering hypothesis ranking. Although H7 and H8 both explain parts of the reported symptoms, the Critic rated both WEAK, not SUPPORTED, and retry count is 2 of 2, which further argues against forcing a conclusion from weak survivors. C1 and C2 do not overcome the lack of grounded service data, and H7/H8 cannot be recommended without corroborating observability that ties the reported NullPointerException in E1 to the customer symptom in E2.",
+        "retryCount": 2
+      }
+    },
+    {
+      "seq": 30,
+      "type": "ESCALATION",
+      "agent": "Orchestrator",
+      "summary": "Escalated to a human: INSUFFICIENT_EVIDENCE",
+      "payload": {
+        "decisionType": "INSUFFICIENT_EVIDENCE"
+      }
+    }
+  ]
+}

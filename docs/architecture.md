@@ -1,107 +1,108 @@
 # Architecture — AI Incident Triage Agent ("AI SRE")
 
-An AI agent that triages a production incident: it reasons step by step to find the
-likely **root cause**, **grounds** that reasoning in cited runbooks and past
-postmortems via **Microsoft Foundry IQ**, drafts a fix, and writes a postmortem —
-then **stops for a human to approve**. The agent never takes real action itself.
+A **5-agent** system that triages a production incident: it reasons to a likely
+**root cause**, **grounds** that reasoning in cited runbooks and past postmortems via
+**Microsoft Foundry IQ**, drafts a fix, and writes a postmortem — then **stops for a
+human to approve**. The agent never takes real action itself.
 
-- **Orchestrator (my code):** Spring Boot REST service — owns the reasoning *loop*.
-- **Brain (not my code):** the Microsoft Foundry model — makes each *decision* inside a turn.
-- **Grounding (required):** Microsoft Foundry IQ — returns cited knowledge to reduce hallucination.
-- **Tools:** five Java functions the model may call (logs, metrics, knowledge, code, draft-fix).
-- **Trace + safety:** step trace, hard iteration cap, draft-only fixes, human approval gate.
+- **Orchestrator (my code):** a **deterministic** Spring Boot service (Planner-Executor).
+  It owns the control flow; the model owns the reasoning inside each step.
+- **Five specialized agents:** Triage → Knowledge → RootCause → **Critic** → Judge,
+  each a plain `@Service` with its own focused prompt and its own success criteria.
+- **Grounding (required):** Microsoft Foundry IQ (Azure AI Search agentic retrieval) —
+  returns cited knowledge to reduce hallucination. One retrieval per incident.
+- **Safety:** glass-box trace, boundary secret redaction, four-layer human-approval
+  gate, and deterministic guards that can override the model ("model proposes, code verifies").
 
 > Built with AI-assisted development (GitHub Copilot / Claude Code).
+
+## Named patterns
+
+- **Planner-Executor** — `AgentOrchestrator` runs a fixed plan in Java; model output never redirects control flow.
+- **Critic-Verifier** — `CriticAgent` is adversarial to `RootCauseAgent`, trying to *disprove* each hypothesis.
+- **Self-reflection retry** — when no hypothesis is SUPPORTED, the killed hypotheses + reasons are fed back for a genuine re-think (≤ 2 retries).
+- **Role-based specialization** — five narrow roles instead of one mega-prompt; each independently testable and auditable.
 
 ## Component view
 
 ```mermaid
 flowchart TD
-    Client["Caller (curl / demo UI)"]
-    Client -->|"POST /triage&#10;JSON: { service, stackTrace }"| Controller
+    Client["Caller (curl / Postman / demo)"] -->|"POST /triage&#10;{ service, stackTrace }"| Controller["TriageController&#10;@RestController"]
+    Controller --> Orchestrator
 
-    subgraph Orchestrator["Spring Boot Orchestrator — my code (owns the LOOP)"]
-        Controller["TriageController&#10;@RestController"]
-        Loop["ReasoningLoop&#10;@Service"]
-        Registry["ToolRegistry&#10;dispatch by name"]
-        Safety["Safety + Trace&#10;iteration cap • draft-only • approval gate • step trace"]
-        Controller --> Loop
-        Loop --- Safety
-        Loop -->|"execute(name, args)"| Registry
+    subgraph Orchestrator["AgentOrchestrator — deterministic Planner-Executor (my code)"]
+        direction TB
+        Redact["① SecretRedactor&#10;redact raw input ONCE (boundary)"]
+        Triage["② TriageAgent&#10;raw signals ➜ Evidence E1..En"]
+        Knowledge["③ KnowledgeAgent&#10;➜ Citations C1..Cn"]
+        RootCause["④ RootCauseAgent&#10;2–3 competing Hypotheses H# (+ E/C ids)"]
+        Critic["⑤ CriticAgent (adversarial)&#10;SUPPORTED / WEAK / REJECTED + reasons"]
+        Judge["⑥ JudgeAgent&#10;RECOMMEND / ESCALATE / INSUFFICIENT"]
+        Guards["⑦ Guards (code verifies)&#10;GUARD_OVERRIDE / PROVENANCE_NORMALIZED"]
+        Redact --> Triage --> Knowledge --> RootCause --> Critic
+        Critic -. "no hypothesis SUPPORTED&#10;feed rejections back (≤ 2 retries)" .-> RootCause
+        Critic --> Judge --> Guards
     end
 
-    Loop <-->|"each turn:&#10;messages + tool specs ➜ tool calls / final JSON"| ModelClient["FoundryModelClient&#10;(ModelClient interface)"]
-    ModelClient <-->|"HTTPS — /openai/v1/chat/completions&#10;api-key auth • reasoning_effort=low"| Foundry[("Microsoft Foundry&#10;MODEL = the BRAIN&#10;gpt-5-mini (reasoning)")]
+    Triage --> Model
+    RootCause --> Model
+    Critic --> Model
+    Judge --> Model
+    Model["FoundryModelClient"] <-->|"HTTPS /openai/v1/chat/completions&#10;api-key • reasoning_effort=low"| Foundry[("Microsoft Foundry&#10;gpt-5.4")]
+    Knowledge -->|"retrieve(query) — 1×/incident"| Iq["FoundryIqClient"]
+    Iq <-->|"HTTPS agentic retrieval"| IQ[("Microsoft Foundry IQ&#10;Azure AI Search&#10;cited knowledge")]
 
-    subgraph Tools["The 5 Tools (Java functions)"]
-        direction LR
-        GetLogs["get_logs"]
-        GetMetrics["get_metrics"]
-        SearchK["search_knowledge"]
-        ReadCode["read_code"]
-        DraftFix["draft_fix&#10;(drafts ONLY)"]
-    end
-    Registry --> GetLogs
-    Registry --> GetMetrics
-    Registry --> SearchK
-    Registry --> ReadCode
-    Registry --> DraftFix
-
-    SearchK -->|"retrieve(query)"| IqClient["FoundryIqClient"]
-    IqClient <-->|"HTTPS — retrieval"| IQ[("Microsoft Foundry IQ&#10;GROUNDING + citations")]
-
-    Loop -->|"TriageResult&#10;status = AWAITING_APPROVAL"| Controller
-    Controller -->|"200 OK — JSON"| Client
-
-    Human["Human reviewer"] -.->|"approves before any real action"| Client
+    Guards --> Result["TriageResult&#10;status = AWAITING_APPROVAL / ESCALATED_*"]
+    Result -->|"200 OK — JSON + glass-box trace"| Client
+    Human["Human reviewer"] -. "approves before ANY real action" .-> Result
 ```
 
-## The reasoning loop, one turn at a time
+All agents read and write one shared **`IncidentContext`** (evidence, citations,
+hypotheses with provenance, critiques, decision, and the trace). **Write discipline**
+is enforced by the type system: each agent receives a narrow view (`TriageView`,
+`JudgeView`, …) that can read everything but write only its own section — writing a
+foreign section is a compile error.
+
+## The pipeline, step by step
 
 ```mermaid
 sequenceDiagram
+    autonumber
     participant C as Caller
-    participant T as TriageController
-    participant L as ReasoningLoop
-    participant M as Foundry model
-    participant K as ToolRegistry + Tools
-    participant IQ as Foundry IQ
+    participant O as AgentOrchestrator
+    participant T as TriageAgent
+    participant K as KnowledgeAgent
+    participant R as RootCauseAgent
+    participant V as CriticAgent
+    participant J as JudgeAgent
 
-    C->>T: POST /triage { service, stackTrace }
-    T->>L: triage(incident)
-    Note over L: messages = [system prompt, incident]
-
-    loop up to agent.max-iterations (default 6)
-        L->>M: nextTurn(messages, tool specs)
-        alt model asks for tools
-            M-->>L: tool_calls (e.g. get_logs, search_knowledge)
-            L->>K: execute(name, args)
-            K-->>L: tool result text
-            opt search_knowledge
-                K->>IQ: retrieve(query)
-                IQ-->>K: cited snippets [SOURCE: ...]
-            end
-            L->>L: append assistant + tool results to messages; record trace
-        else model is done
-            M-->>L: final JSON conclusion (no tool calls)
-            L->>L: parse -> TriageResult (AWAITING_APPROVAL)
-        end
+    C->>O: POST /triage { service, stackTrace }
+    Note over O: redact secrets at the boundary (once, before any model)
+    O->>T: extract evidence (incident-report + observability channels)
+    T-->>O: Evidence E1..En (source assigned by code)
+    O->>K: ground in knowledge
+    K-->>O: Citations C1..Cn (Foundry IQ) — or "none relevant"
+    loop up to 2 retries, while no hypothesis is SUPPORTED
+        O->>R: propose competing hypotheses (+ rejected ones, on retry)
+        R-->>O: H# with supporting E/C ids
+        O->>O: normalize citation ids to real C-ids (code verifies)
+        O->>V: try to DISPROVE each hypothesis
+        V-->>O: SUPPORTED / WEAK / REJECTED + reasons (each cites E/C ids)
     end
-
-    Note over L: cap reached without a conclusion -> ESCALATED_ITERATION_CAP
-    L-->>T: TriageResult
-    T-->>C: 200 OK (JSON)
+    O->>J: decide (evidence, citations, critiques, retry count)
+    J-->>O: RECOMMEND_REMEDIATION / ESCALATE_TO_HUMAN / INSUFFICIENT_EVIDENCE
+    Note over O: deterministic guards may override the model → GUARD_OVERRIDE
+    O-->>C: TriageResult — AWAITING_APPROVAL / ESCALATED_* + full trace
 ```
 
-## Feature flags (so the baseline always runs without credentials)
+## Configuration & flags
 
-| Flag | Current (`application.yml`) | Effect |
+| Flag (`application.yml`) | Value | Effect |
 | --- | --- | --- |
-| `foundry.enabled` | `true` | `true` → real model-driven loop (gpt-5-mini). `false` → Phase-1 stub path (canned data, no network). |
-| `foundry.iq.enabled` | `false` | `false` → `search_knowledge` returns canned cited snippets. `true` → real Foundry IQ retrieval. |
-| `agent.max-iterations` | `6` | Hard cap on model turns per incident (safety + cost guard). |
-| `agent.min-confidence-to-propose` | `0.6` | Below this the agent should escalate rather than propose (full enforcement in Phase 3). |
+| `foundry.enabled` | `true` | `true` → real model-driven pipeline (gpt-5.4). `false` → deterministic offline stub (canned, no network) so the baseline runs without keys. |
+| `foundry.iq.enabled` | `true` | `true` → real Foundry IQ retrieval. `false` → `KnowledgeAgent` falls back to the two bundled sample docs. |
 
-Secrets (`FOUNDRY_API_KEY`, `FOUNDRY_IQ_API_KEY`) come from environment variables only and
-are never committed. Foundry/IQ endpoint paths, api-versions, and auth headers live in
-`application.yml` as configurable values — confirm the exact shapes on Microsoft Learn.
+The RootCause⇄Critic retry cap is a code constant (`AgentOrchestrator.MAX_RETRIES = 2`).
+Secrets (`FOUNDRY_API_KEY`, `FOUNDRY_IQ_API_KEY`) come from environment variables only
+and are never committed. Endpoint paths, api-versions, and auth headers live in
+`application.yml` as configurable values.
